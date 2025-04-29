@@ -1,4 +1,4 @@
-name: gaussian_splatting
+name: gs_reflection
 channels:
   - pytorch
   - conda-forge
@@ -14,6 +14,7 @@ dependencies:
   - tqdm
   - pip:
     - submodules/diff-gaussian-rasterization
+    - submodules/diff-surfel-rasterization
     - submodules/simple-knn
     - submodules/fused-ssim
     - opencv-python
