@@ -56,6 +56,12 @@ class ModelParams(ParamGroup):
         self.train_test_exp = False
         self.data_device = "cuda"
         self.eval = False
+
+        self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature'] # TODO
+
+        self.deferred_reflection = False # TODO
+        self.surfel_splatting = False # TODO
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -69,6 +75,9 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.debug = False
         self.antialiasing = False
+        
+        self.depth_ratio = 0.0 # TODO
+
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
@@ -97,6 +106,29 @@ class OptimizationParams(ParamGroup):
         self.depth_l1_weight_final = 0.01
         self.random_background = False
         self.optimizer_type = "default"
+        
+        self.refl_lr = 0.006 # TODO
+        self.envmap_cubemap_lr = 0.05 # TODO
+        self.refl_init_value = 1e-3 # TODO
+        self.lambda_refl_smooth = 0.4 # TODO
+        self.init_until_iter = 3000 # TODO
+        self.feature_rest_from_iter = 10_000 # TODO
+        self.normal_prop_until_iter = 24_000 # TODO
+        self.opac_lr0_interval = 200 # TODO
+        self.densification_interval_when_prop = 500 # TODO
+        self.longer_prop_iter = 0 # TODO
+        self.use_env_scope = False # TODO
+        self.env_scope_center = [0.,0.,0.] # TODO
+        self.env_scope_radius = 0.0 # TODO
+
+        self.lambda_dist = 0.0 # TODO
+        self.lambda_normal = 0.05 # TODO
+        self.opacity_cull = 0.05 # TODO
+
+        self.color_sabotage = False # TODO
+        self.normal_propagation = False # TODO
+        self.depth_distortion_loss = False # TODO
+        self.normal_consistency_loss = False # TODO
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
