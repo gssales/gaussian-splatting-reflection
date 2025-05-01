@@ -57,7 +57,7 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
 
-        self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature'] # TODO
+        self.render_items = ['RGB', 'Alpha', 'Normal', 'Surface Depth', 'Depth', 'Edge', 'Curvature'] # TODO
 
         self.deferred_reflection = False # TODO
         self.surfel_splatting = False # TODO
