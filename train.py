@@ -47,7 +47,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
+
+    total_iterations = opt.iterations + 1
+    densify_until_iteration = opt.densify_until_iter
+    if opt.normal_propagation:
+        total_iterations += opt.longer_prop_iter
+        densify_until_iteration += opt.longer_prop_iter
+        normal_propagation_iterations = opt.normal_prop_until_iter + opt.longer_prop_iter
+    
+    if opt.use_env_scope:
+        center = [float(c) for c in opt.env_scope_center]
+        env_scope_center = torch.tensor(center, device='cuda')
+        env_scope_radius = opt.env_scope_radius
+        refl_mask_loss_weight = 0.4
+
+    gaussians = GaussianModel(dataset.sh_degree, dataset.deferred_reflection, opt.optimizer_type)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -68,16 +82,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
 
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, total_iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations + 1):
+    for iteration in range(first_iter, total_iterations):
+
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
-            gaussians.oneupSHdegree()
+        if dataset.deferred_reflection:
+            # deferred_reflection delays the sh optimization
+            if iteration > opt.feature_rest_from_iter and iteration % 1000 == 0:
+                gaussians.oneupSHdegree()
+        else:
+            if iteration % 1000 == 0:
+                gaussians.oneupSHdegree()
 
         # Pick a random Camera
         if not viewpoint_stack:
@@ -110,6 +130,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
+        def get_outside_msk():
+            return None if not opt.use_env_scope else \
+                torch.sum((gaussians.get_xyz - env_scope_center[None])**2, dim=-1) > env_scope_radius**2
+
+        if opt.use_env_scope and 'refl_strength_map' in render_pkg:
+            refls = gaussians.get_refl
+            refl_msk_loss = refls[get_outside_msk()].mean()
+            loss += refl_mask_loss_weight * refl_msk_loss
+
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
@@ -141,15 +170,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
-            if (iteration in saving_iterations):
+            if (iteration in saving_iterations or iteration == total_iterations-1):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
             # Densification
-            if iteration < opt.densify_until_iter:
+            if iteration < densify_until_iteration:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+
+                if iteration <= opt.init_until_iter:
+                    opacity_reset_intval = 3000
+                    densification_interval = 100
+                elif opt.normal_propagation and iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter:
+                    opacity_reset_intval = 3000 # 2:1 (reset 1: reset 0)
+                    densification_interval = opt.densification_interval_when_prop
+                else:
+                    opacity_reset_intval = 3000
+                    densification_interval = 100
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
@@ -159,7 +198,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gaussians.reset_opacity()
 
             # Optimizer step
-            if iteration < opt.iterations:
+            if iteration < total_iterations:
                 gaussians.exposure_optimizer.step()
                 gaussians.exposure_optimizer.zero_grad(set_to_none = True)
                 if use_sparse_adam:

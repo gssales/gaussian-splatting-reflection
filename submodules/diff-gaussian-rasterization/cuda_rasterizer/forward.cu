@@ -279,11 +279,15 @@ renderCUDA(
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ normals,
+	const float* __restrict__ refl_stengths,
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
+	float* __restrict__ out_normal_map,
+	float* __restrict__ out_refl_strength_map,
 	const float* __restrict__ depths,
 	float* __restrict__ invdepth)
 {
@@ -316,6 +320,8 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+	float normal_map[3] = { 0 };
+	float refl_strength = 0.0f;
 
 	float expected_invdepth = 0.0f;
 
@@ -371,6 +377,10 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 
+			for (int ax = 0; ax < 3; ax++)
+				normal_map[ax] += normals[collected_id[j] * 3 + ax] * alpha * T;
+			refl_strength += refl_stengths[collected_id[j]] * alpha * T;
+
 			if(invdepth)
 			expected_invdepth += (1 / depths[collected_id[j]]) * alpha * T;
 
@@ -391,6 +401,10 @@ renderCUDA(
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 
+		for (int ax = 0; ax < 3; ax++)
+			out_normal_map[ax * H * W + pix_id] = normal_map[ax];
+		out_refl_strength_map[pix_id] = refl_strength;
+
 		if (invdepth)
 		invdepth[pix_id] = expected_invdepth;// 1. / (expected_depth + T * 1e3);
 	}
@@ -403,11 +417,15 @@ void FORWARD::render(
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
+	const float* normals,
+	const float* refl_strengths,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
 	float* out_color,
+	float* out_normal_map,
+	float* out_refl_strength_map,
 	float* depths,
 	float* depth)
 {
@@ -417,11 +435,15 @@ void FORWARD::render(
 		W, H,
 		means2D,
 		colors,
+		normals,
+		refl_strengths,
 		conic_opacity,
 		final_T,
 		n_contrib,
 		bg_color,
 		out_color,
+		out_normal_map,
+		out_refl_strength_map,
 		depths, 
 		depth);
 }

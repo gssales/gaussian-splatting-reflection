@@ -11,15 +11,13 @@
 
 from scene.cameras import Camera
 import numpy as np
+from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
-from PIL import Image
-import cv2
+import os, cv2, torch
 
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dataset):
-    image = Image.open(cam_info.image_path)
-
     if cam_info.depth_path != "":
         try:
             if is_nerf_synthetic:
@@ -39,9 +37,15 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
     else:
         invdepthmap = None
         
-    orig_w, orig_h = image.size
+    orig_w, orig_h = cam_info.image.size
     if args.resolution in [1, 2, 4, 8]:
         resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
+        HWK = None
+        if cam_info.K is not None:
+            K = cam_info.K.copy()
+            K[:2] = K[:2] * resolution_scale
+            # Height Width K (Matriz intrinseca)
+            HWK = (resolution[1], resolution[0], K)
     else:  # should be a type that converts to float
         if args.resolution == -1:
             if orig_w > 1600:
@@ -59,11 +63,27 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
 
         scale = float(global_down) * float(resolution_scale)
         resolution = (int(orig_w / scale), int(orig_h / scale))
+        HWK = None
+        if cam_info.K is not None:
+            K = cam_info.K.copy()
+            K[:2] = K[:2] * scale
+            HWK = (resolution[1], resolution[0], K)
+    
+    refl_path = os.path.join(os.path.dirname(os.path.dirname(cam_info.image_path)), 'image_msk')
+    refl_path = os.path.join(refl_path, os.path.basename(cam_info.image_path))
+    if not os.path.exists(refl_path):
+        refl_path = refl_path.replace('.JPG', '.jpg')
+    if os.path.exists(refl_path):
+        refl_msk = cv2.imread(refl_path) != 0 # max == 1
+        refl_msk = torch.tensor(refl_msk).permute(2,0,1).float()
+    else: 
+        refl_msk = None
 
     return Camera(resolution, colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, depth_params=cam_info.depth_params,
-                  image=image, invdepthmap=invdepthmap,
+                  image=cam_info.image, invdepthmap=invdepthmap,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device,
+                  HWK=HWK, gt_refl_mask=refl_msk,
                   train_test_exp=args.train_test_exp, is_test_dataset=is_test_dataset, is_test_view=cam_info.is_test)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args, is_nerf_synthetic, is_test_dataset):

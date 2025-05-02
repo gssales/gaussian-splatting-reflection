@@ -14,8 +14,29 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+from utils.general_utils import sample_camera_rays
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
+# rayd: x,3, from camera to world points
+# normal: x,3
+# all normalized
+def reflection(rayd, normal):
+    refl = rayd - 2*normal*torch.sum(rayd*normal, dim=-1, keepdim=True)
+    return refl
+
+def sample_cubemap_color(rays_d, env_map):
+    H,W = rays_d.shape[:2]
+    # ativação do env map sigmoid
+    outcolor = torch.sigmoid(env_map(rays_d.reshape(-1,3)))
+    outcolor = outcolor.reshape(H,W,3).permute(2,0,1)
+    return outcolor
+
+def get_refl_color(envmap: torch.Tensor, HWK, R, T, normal_map): #RT W2C
+    rays_d = sample_camera_rays(HWK, R, T)
+    rays_d = reflection(rays_d, normal_map)
+    #rays_d = rays_d.clamp(-1, 1) # avoid numerical error when arccos
+    return sample_cubemap_color(rays_d, envmap)
+
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False, initial_stage=False):
     """
     Render the scene. 
     
@@ -86,9 +107,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
 
+    normals = pc.get_min_axis(viewpoint_camera.camera_center) # x,3
+    refl_strengths = pc.get_refl
+    if refl_strengths.size(0) == 0:
+        refl_strengths = torch.zeros_like(opacity).cuda()
+
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if separate_sh:
-        rendered_image, radii, depth_image = rasterizer(
+        base_color, radii, depth_image = rasterizer(
             means3D = means3D,
             means2D = means2D,
             dc = dc,
@@ -99,30 +125,51 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
     else:
-        rendered_image, radii, depth_image = rasterizer(
+        base_color, radii, depth_image, normal_map, refl_strength_map = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = shs,
             colors_precomp = colors_precomp,
+            normals = normals,
+            refl_strengths = refl_strengths,
             opacities = opacity,
             scales = scales,
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
-        
+    
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
         exposure = pc.get_exposure_from_name(viewpoint_camera.image_name)
-        rendered_image = torch.matmul(rendered_image.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
+        base_color = torch.matmul(base_color.permute(1, 2, 0), exposure[:3, :3]).permute(2, 0, 1) + exposure[:3, 3,   None, None]
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    rendered_image = rendered_image.clamp(0, 1)
-    out = {
-        "render": rendered_image,
-        "viewspace_points": screenspace_points,
-        "visibility_filter" : (radii > 0).nonzero(),
-        "radii": radii,
-        "depth" : depth_image
-        }
+    base_color = base_color.clamp(0, 1)
+    if (pc.deferred_reflection and initial_stage) or not pc.deferred_reflection:
+        out = {
+            "render": base_color,
+            "viewspace_points": screenspace_points,
+            "visibility_filter" : (radii > 0).nonzero(),
+            "radii": radii,
+            "depth" : depth_image
+            }
+    else:
+        n_map = normal_map.permute(1,2,0)
+        n_map = n_map / (torch.norm(n_map, dim=-1, keepdim=True)+1e-6)
+        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, n_map)
+
+        final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
+
+        out = {
+            "render": final_image,
+            "refl_strength_map": refl_strength_map,
+            'normal_map': normal_map,
+            "refl_color_map": refl_color,
+            "base_color_map": base_color,
+            "viewspace_points": screenspace_points,
+            "visibility_filter" : (radii > 0).nonzero(),
+            "radii": radii,
+            "depth" : depth_image
+            }
     
     return out

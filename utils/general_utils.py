@@ -131,3 +131,27 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+pixel_camera = None
+# REVIEW: gera os raios de cada pixel pela camera
+def sample_camera_rays(HWK, R, T):
+    # Height Width K Matriz Intrinseca, Rotação, Translação
+    H,W,K = HWK
+    R = R.T # NOTE!!! the R rot matrix is transposed save in 3DGS
+    
+    global pixel_camera
+    if pixel_camera is None or pixel_camera.shape[0] != H:
+        K = K.astype(np.float32)
+        i, j = np.meshgrid(np.arange(W, dtype=np.float32),
+                        np.arange(H, dtype=np.float32),
+                        indexing='xy')
+        xy1 = np.stack([i, j, np.ones_like(i)], axis=2)
+        pixel_camera = np.dot(xy1, np.linalg.inv(K).T)
+        pixel_camera = torch.tensor(pixel_camera).cuda()
+
+    rays_o = (-R.T @ T.unsqueeze(-1)).flatten()
+    pixel_world = (pixel_camera - T[None, None]).reshape(-1, 3) @ R
+    rays_d = pixel_world - rays_o[None]
+    rays_d = rays_d / torch.norm(rays_d, dim=1, keepdim=True)
+    rays_d = rays_d.reshape(H,W,3)
+    return rays_d

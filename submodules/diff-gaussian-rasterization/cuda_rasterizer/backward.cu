@@ -459,15 +459,21 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
+	const float* __restrict__ normals,
+	const float* __restrict__ refl_strengths,
 	const float* __restrict__ depths,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
+	const float* __restrict__ dL_dnormal_map,
+	const float* __restrict__ dL_drefl_strength_map,
 	const float* __restrict__ dL_invdepths,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
+	float* __restrict__ dL_dnormals,
+	float* __restrict__ dL_drefl_strengths,
 	float* __restrict__ dL_dinvdepths
 )
 {
@@ -492,6 +498,8 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
+	__shared__ float collected_normals[3 * BLOCK_SIZE];
+	__shared__ float collected_refl_strengths[BLOCK_SIZE];
 	__shared__ float collected_depths[BLOCK_SIZE];
 
 
@@ -506,19 +514,28 @@ renderCUDA(
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
 
 	float accum_rec[C] = { 0 };
+	float accum_norm_rec[3] = { 0 };
 	float dL_dpixel[C];
+	float dL_dnormal[3];
+	float dL_drefl_strength;
+	float accum_refl_strength_rec = 0;
 	float dL_invdepth;
 	float accum_invdepth_rec = 0;
 	if (inside)
 	{
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+		for (int i = 0; i < 3; i++)
+			dL_dnormal[i] = dL_dnormal_map[i * H * W + pix_id];
+		dL_drefl_strength = dL_drefl_strength_map[pix_id];
 		if(dL_invdepths)
 		dL_invdepth = dL_invdepths[pix_id];
 	}
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
+	float last_normal[3] = { 0 };
+	float last_refl_strength = 0;
 	float last_invdepth = 0;
 
 
@@ -542,6 +559,11 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
+
+			for (int i = 0; i < 3; i++)
+				collected_normals[i * BLOCK_SIZE + block.thread_rank()] = normals[coll_id * 3 + i];
+
+			collected_refl_strengths[block.thread_rank()] = refl_strengths[coll_id];
 
 			if(dL_invdepths)
 			collected_depths[block.thread_rank()] = depths[coll_id];
@@ -592,6 +614,27 @@ renderCUDA(
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
+
+			for (int ax = 0; ax < 3; ax++)
+			{
+				const float n = collected_normals[ax * BLOCK_SIZE + j];
+				// Update last normal (to be used in the next iteration)
+				accum_norm_rec[ax] = last_alpha * last_normal[ax] + (1.f - last_alpha) * accum_norm_rec[ax];
+				last_normal[ax] = n;
+
+				const float dL_dchannel = dL_dnormal[ax];
+				dL_dalpha += (n - accum_norm_rec[ax]) * dL_dchannel;
+				// Update the gradients w.r.t. color of the Gaussian. 
+				// Atomic, since this pixel is just one of potentially
+				// many that were affected by this Gaussian.
+				atomicAdd(&(dL_dnormals[global_id * 3 + ax]), dchannel_dcolor * dL_dchannel);
+			}
+
+			accum_refl_strength_rec = last_alpha * last_refl_strength + (1.f - last_alpha) * accum_refl_strength_rec;
+			last_refl_strength = collected_refl_strengths[j];
+			dL_dalpha += (collected_refl_strengths[j] - accum_refl_strength_rec) * dL_drefl_strength;
+			atomicAdd(&(dL_drefl_strengths[global_id]), dchannel_dcolor * dL_drefl_strength);
+
 			// Propagate gradients from inverse depth to alphaas and
 			// per Gaussian inverse depths
 			if (dL_dinvdepths)
@@ -720,15 +763,21 @@ void BACKWARD::render(
 	const float2* means2D,
 	const float4* conic_opacity,
 	const float* colors,
+	const float* normals,
+	const float* refl_strengths,
 	const float* depths,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
+	const float* dL_dnormal_map,
+	const float* dL_drefl_strength_map,
 	const float* dL_invdepths,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
+	float* dL_dnormals,
+	float* dL_drefl_strengths,
 	float* dL_dinvdepths)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
@@ -739,15 +788,21 @@ void BACKWARD::render(
 		means2D,
 		conic_opacity,
 		colors,
+		normals,
+		refl_strengths,
 		depths,
 		final_Ts,
 		n_contrib,
 		dL_dpixels,
+		dL_dnormal_map,
+		dL_drefl_strength_map,
 		dL_invdepths,
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
+		dL_dnormals,
+		dL_drefl_strengths,
 		dL_dinvdepths
 		);
 }

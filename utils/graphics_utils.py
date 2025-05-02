@@ -70,6 +70,26 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     return P
 
+def getProjectionMatrixCorrect(znear, zfar, H, W, K):
+
+  top = (K[1,2])/K[1,1] * znear
+  bottom = -(H - K[1,2])/K[1,1] * znear
+  right = (K[0,2])/K[0,0] * znear
+  left = -(W - K[0,2])/K[0,0] * znear
+
+  P = torch.zeros(4, 4)
+
+  z_sign = 1.0
+
+  P[0, 0] = 2.0 * znear / (right - left)
+  P[1, 1] = 2.0 * znear / (top - bottom)
+  P[0, 2] = (right + left) / (right - left)
+  P[1, 2] = (top + bottom) / (top - bottom)
+  P[3, 2] = z_sign
+  P[2, 2] = z_sign * zfar / (zfar - znear)
+  P[2, 3] = -(zfar * znear) / (zfar - znear)
+  return P
+
 def fov2focal(fov, pixels):
     return pixels / (2 * math.tan(fov / 2))
 

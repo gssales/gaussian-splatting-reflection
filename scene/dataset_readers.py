@@ -27,8 +27,10 @@ class CameraInfo(NamedTuple):
     uid: int
     R: np.array
     T: np.array
+    K: np.array
     FovY: np.array
     FovX: np.array
+    image: np.array
     depth_params: dict
     image_path: str
     image_name: str
@@ -89,11 +91,30 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
             focal_length_x = intr.params[0]
             FovY = focal2fov(focal_length_x, height)
             FovX = focal2fov(focal_length_x, width)
+            K = np.array([
+                [focal_length_x, 0, intr.params[1]],
+                [0, focal_length_x, intr.params[2]],
+                [0, 0, 1],
+            ])
         elif intr.model=="PINHOLE":
             focal_length_x = intr.params[0]
             focal_length_y = intr.params[1]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
+            K = np.array([
+                [focal_length_x, 0, intr.params[2]],
+                [0, focal_length_y, intr.params[3]],
+                [0, 0, 1],
+            ])
+        elif intr.model=="SIMPLE_RADIAL":
+            focal_length_x = intr.params[0]
+            FovY = focal2fov(focal_length_x, height)
+            FovX = focal2fov(focal_length_x, width)
+            K = np.array([
+                [focal_length_x, 0, intr.params[1]],
+                [0, focal_length_x, intr.params[2]],
+                [0, 0, 1],
+            ])
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
@@ -108,8 +129,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
         image_path = os.path.join(images_folder, extr.name)
         image_name = extr.name
         depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
+        image = Image.open(image_path.replace('.JPG', '.jpg'))
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, depth_params=depth_params,
+        cam_info = CameraInfo(uid=uid, R=R, T=T, K=K, FovY=FovY, FovX=FovX, image=image, depth_params=depth_params,
                               image_path=image_path, image_name=image_name, depth_path=depth_path,
                               width=width, height=height, is_test=image_name in test_cam_names_list)
         cam_infos.append(cam_info)
@@ -257,6 +279,15 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            
+            fo = fov2focal(fovx, image.size[0])
+            W,H = image.size[0], image.size[1]
+            # Matriz intrinseca 
+            K = np.array([
+                [fo, 0, W/2],
+                [0, fo, H/2],
+                [0, 0, 1],
+            ])
 
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
             FovY = fovy 
@@ -264,7 +295,7 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
 
             depth_path = os.path.join(depths_folder, f"{image_name}.png") if depths_folder != "" else ""
 
-            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX,
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, K=K, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name,
                             width=image.size[0], height=image.size[1], depth_path=depth_path, depth_params=None, is_test=is_test))
             
