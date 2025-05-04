@@ -469,6 +469,7 @@ renderCUDA(
 	const float* __restrict__ dL_drefl_strength_map,
 	const float* __restrict__ dL_invdepths,
 	float3* __restrict__ dL_dmean2D,
+	float3* __restrict__ dL_dmean2D_pixels,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
@@ -599,6 +600,7 @@ renderCUDA(
 			// gradients w.r.t. alpha (blending factor for a Gaussian/pixel
 			// pair).
 			float dL_dalpha = 0.0f;
+			float dL_dalpha_means2d = 0.0f;
 			const int global_id = collected_id[j];
 			for (int ch = 0; ch < C; ch++)
 			{
@@ -609,6 +611,7 @@ renderCUDA(
 
 				const float dL_dchannel = dL_dpixel[ch];
 				dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
+				dL_dalpha_means2d += dL_dalpha;
 				// Update the gradients w.r.t. color of the Gaussian. 
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
@@ -647,6 +650,7 @@ renderCUDA(
 			}
 
 			dL_dalpha *= T;
+			dL_dalpha_means2d *= T;
 			// Update last alpha (to be used in the next iteration)
 			last_alpha = alpha;
 
@@ -656,10 +660,12 @@ renderCUDA(
 			for (int i = 0; i < C; i++)
 				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
+			dL_dalpha_means2d += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 
 
 			// Helpful reusable temporary variables
 			const float dL_dG = con_o.w * dL_dalpha;
+			const float dL_dG_means2d = con_o.w * dL_dalpha_means2d;
 			const float gdx = G * d.x;
 			const float gdy = G * d.y;
 			const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
@@ -668,6 +674,9 @@ renderCUDA(
 			// Update gradients w.r.t. 2D mean position of the Gaussian
 			atomicAdd(&dL_dmean2D[global_id].x, dL_dG * dG_ddelx * ddelx_dx);
 			atomicAdd(&dL_dmean2D[global_id].y, dL_dG * dG_ddely * ddely_dy);
+
+			atomicAdd(&dL_dmean2D_pixels[global_id].x, dL_dG_means2d * dG_ddelx * ddelx_dx);
+			atomicAdd(&dL_dmean2D_pixels[global_id].y, dL_dG_means2d * dG_ddely * ddely_dy);
 
 			// Update gradients w.r.t. 2D covariance (2x2 matrix, symmetric)
 			atomicAdd(&dL_dconic2D[global_id].x, -0.5f * gdx * d.x * dL_dG);
@@ -773,6 +782,7 @@ void BACKWARD::render(
 	const float* dL_drefl_strength_map,
 	const float* dL_invdepths,
 	float3* dL_dmean2D,
+	float3* dL_dmean2D_pixels,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
@@ -798,6 +808,7 @@ void BACKWARD::render(
 		dL_drefl_strength_map,
 		dL_invdepths,
 		dL_dmean2D,
+		dL_dmean2D_pixels,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,

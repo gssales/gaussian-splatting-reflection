@@ -85,6 +85,7 @@ namespace CudaRasterizer
 			const float* dL_drefl_strength_map,
 			const float* dL_invdepths,
 			float* dL_dmean2D,
+			float* dL_dmean2D_pixels,
 			float* dL_dconic,
 			float* dL_dopacity,
 			float* dL_dcolor,
