@@ -111,6 +111,11 @@ class GaussianModel:
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
+    def set_opacity_lr(self, lr):
+        for param_group in self.optimizer.param_groups:
+            if param_group["name"] == "opacity":
+                param_group['lr'] = lr
+
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
@@ -318,6 +323,69 @@ class GaussianModel:
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
+
+    def reset_opacity_norm_prop0(self):
+        opacities_old = self.get_opacity
+        msk = (opacities_old < 0.01).flatten()
+        opacities_new = torch.ones_like(opacities_old)*inverse_sigmoid(torch.tensor([0.01]).cuda())
+        opacities_new[msk] = self._opacity[msk]
+
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        if "opacity" not in optimizable_tensors: return
+        self._opacity = optimizable_tensors["opacity"]
+
+    def reset_opacity_norm_prop1(self, exclusive_msk = None):
+        opacity_old = self.get_opacity
+        o_msk = (opacity_old > 0.9).flatten()
+        if exclusive_msk is not None:
+            o_msk = torch.logical_or(o_msk, exclusive_msk)
+        opacities_new = torch.ones_like(opacity_old)*inverse_sigmoid(torch.tensor([0.9]).cuda())
+        opacities_new[o_msk] = self._opacity[o_msk]
+        
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        if "opacity" not in optimizable_tensors: return
+        self._opacity = optimizable_tensors["opacity"]
+
+    def reset_refl(self, exclusive_msk = None):
+        refl_new = inverse_sigmoid(torch.max(self.get_refl, torch.ones_like(self.get_refl)*self.init_refl_value))
+        if exclusive_msk is not None:
+            refl_new[exclusive_msk] = self._refl_strength[exclusive_msk]
+        optimizable_tensors = self.replace_tensor_to_optimizer(refl_new, "refl")
+        if "refl" not in optimizable_tensors: return
+        self._refl_strength = optimizable_tensors["refl"]
+
+    def dist_color(self, exclusive_msk = None):
+        refl_msk = self.get_refl.flatten() > 0.05
+        if exclusive_msk is not None:
+            refl_msk = torch.logical_or(refl_msk, exclusive_msk)
+        dcc = self._features_dc.clone()
+        dist_dcc = dcc + (torch.rand_like(dcc) * 0.4 * 2 - 0.4)
+        dist_dcc[refl_msk] = dcc[refl_msk]
+        optimizable_tensors = self.replace_tensor_to_optimizer(dist_dcc, "f_dc")
+        if "f_dc" not in optimizable_tensors: return
+        self._features_dc = optimizable_tensors["f_dc"]
+
+    def enlarge_refl_scales(self, ret_raw = True, exclusive_msk = None):
+        refl_msk = self.get_refl.flatten() < 0.02
+        if exclusive_msk is not None:
+            refl_msk = torch.logical_or(refl_msk, exclusive_msk)
+        scales = self.get_scaling
+        min_axis_id = torch.argmin(scales, dim = -1, keepdim=True)
+        rmin_axis = (torch.ones_like(scales)*1.5).scatter(1, min_axis_id, 1)
+        if ret_raw:
+            scale_new = self.scaling_inverse_activation(scales*rmin_axis)
+            # only reset refl gaussians
+            scale_new[refl_msk] = self._scaling[refl_msk]
+        else:
+            scale_new = scales*rmin_axis
+            scale_new[refl_msk] = scales[refl_msk]
+        return scale_new
+    
+    def reset_scale(self, exclusive_msk = None):
+        scale_new = self.enlarge_refl_scales(ret_raw=True, exclusive_msk=exclusive_msk)
+        optimizable_tensors = self.replace_tensor_to_optimizer(scale_new, "scaling")
+        if "scaling" not in optimizable_tensors: return
+        self._scaling = optimizable_tensors["scaling"]
 
     def load_ply(self, path, use_train_test_exp = False):
         plydata = PlyData.read(path)

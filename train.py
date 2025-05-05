@@ -185,22 +185,43 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if iteration <= opt.init_until_iter:
+                if opt.normal_propagation and iteration <= opt.init_until_iter:
                     opacity_reset_intval = 3000
                     densification_interval = 100
                 elif opt.normal_propagation and iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter:
                     opacity_reset_intval = 3000 # 2:1 (reset 1: reset 0)
                     densification_interval = opt.densification_interval_when_prop
                 else:
-                    opacity_reset_intval = 3000
-                    densification_interval = 100
+                    opacity_reset_intval = opt.opacity_reset_interval
+                    densification_interval = opt.densification_interval
 
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, radii)
-                
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                    gaussians.reset_opacity()
+
+                if  opt.color_sabotage and (opt.init_until_iter < iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter) and iteration % 1000 == 0:
+                    outside_msk = get_outside_msk()
+                    gaussians.dist_color(exclusive_msk=outside_msk)
+
+                if opt.normal_propagation:
+                    opacity_reset = False
+                    if iteration % opacity_reset_intval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                        opacity_reset = True
+                        outside_msk = get_outside_msk()
+                        gaussians.reset_opacity_norm_prop0()
+                        gaussians.reset_refl(exclusive_msk=outside_msk)
+                    if  opt.opac_lr0_interval > 0 and (opt.init_until_iter < iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter) and iteration % opt.opac_lr0_interval == 0: ## 200->50
+                        gaussians.set_opacity_lr(opt.opacity_lr)
+                    if  (opt.init_until_iter < iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter) and iteration % 1000 == 0:
+                        if not opacity_reset:
+                            outside_msk = get_outside_msk()
+                            gaussians.reset_opacity_norm_prop1(exclusive_msk=outside_msk)
+                            gaussians.reset_scale(exclusive_msk=outside_msk)
+                            if opt.opac_lr0_interval > 0 and iteration != opt.normal_prop_until_iter + opt.longer_prop_iter:
+                                gaussians.set_opacity_lr(0.0)
+
+                elif iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                        gaussians.reset_opacity()
 
             # Optimizer step
             if iteration < total_iterations:
