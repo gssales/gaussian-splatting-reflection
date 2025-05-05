@@ -15,6 +15,8 @@ import socket
 import json
 import struct
 from scene.cameras import MiniCam
+import numpy as np
+from utils.graphics_utils import fov2focal
 
 host = "127.0.0.1"
 port = 6009
@@ -87,7 +89,15 @@ def receive():
             world_view_transform[:,2] = -world_view_transform[:,2]
             full_proj_transform = torch.reshape(torch.tensor(message["view_projection_matrix"]), (4, 4)).cuda()
             full_proj_transform[:,1] = -full_proj_transform[:,1]
-            custom_cam = MiniCam(width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform)
+
+            fo = fov2focal(fovx, width)
+            K = np.array([
+                [fo, 0, width/2],
+                [0, fo, height/2],
+                [0, 0, 1],
+            ])
+            HWK = (height, width, K)
+            custom_cam = MiniCam(width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, HWK)
             render_mode = message["render_mode"]
         except Exception as e:
             print("")

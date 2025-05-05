@@ -22,6 +22,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import traceback
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -41,6 +42,10 @@ except:
     SPARSE_ADAM_AVAILABLE = False
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+
+    view_render_options = ["RGB", "3DGS Depth"]
+    if dataset.deferred_reflection:
+        view_render_options = view_render_options + ["Base Color", "DR Normal Map", "Refl. Strength", "Refl. Color"]
 
     if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
         sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
@@ -215,14 +220,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         with torch.no_grad():        
             if network_gui.conn == None:
-                network_gui.try_connect(dataset.render_items)
+                network_gui.try_connect(view_render_options)
             while network_gui.conn != None:
                 try:
                     net_image_bytes = None
                     custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
                     if custom_cam != None:
                         render_pkg = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
-                        net_image = render_net_image(render_pkg, dataset.render_items, render_mode, custom_cam)
+                        net_image = render_net_image(render_pkg, view_render_options, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
                         "#": gaussians.get_opacity.shape[0],
@@ -235,6 +240,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         break
                 except Exception as e:
                     # raise e
+                    traceback.print_exc()
+                    print(e)
                     network_gui.conn = None
 
 def prepare_output_and_logger(args):    
