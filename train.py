@@ -66,7 +66,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         env_scope_radius = opt.env_scope_radius
         refl_mask_loss_weight = 0.4
 
-    gaussians = GaussianModel(dataset.sh_degree, dataset.deferred_reflection, opt.optimizer_type)
+    gaussians = GaussianModel(dataset.sh_degree, dataset.deferred_reflection, dataset.surfel_splatting, opt.optimizer_type)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
