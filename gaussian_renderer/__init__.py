@@ -224,17 +224,39 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         # remember to multiply with accum_alpha since render_normal is unnormalized.
         surf_normal = surf_normal * (render_alpha).detach()
 
-        out =  {
-            "render": base_color,
-            "viewspace_points": means2D,
-            "visibility_filter" : radii > 0,
-            "radii": radii,
-            'rend_alpha': render_alpha,
-            'normal_map': render_normal,
-            'rend_dist': render_dist,
-            'depth': surf_depth,
-            'surf_normal': surf_normal,
-        }
+        if (pc.deferred_reflection and initial_stage) or not pc.deferred_reflection:
+            out =  {
+                "render": base_color,
+                "viewspace_points": means2D,
+                "visibility_filter" : radii > 0,
+                "radii": radii,
+                'rend_alpha': render_alpha,
+                'normal_map': render_normal,
+                'rend_dist': render_dist,
+                'depth': surf_depth,
+                'surf_normal': surf_normal,
+            }
+        else:
+            n_map = render_normal.permute(1,2,0)
+            n_map = n_map / (torch.norm(n_map, dim=-1, keepdim=True)+1e-6)
+            refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, n_map)
+
+            final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
+
+            out = {
+                "render": final_image,
+                "viewspace_points": means2D,
+                "visibility_filter" : radii > 0,
+                "radii": radii,
+                'rend_alpha': render_alpha,
+                'normal_map': render_normal,
+                'rend_dist': render_dist,
+                'depth': surf_depth,
+                'surf_normal': surf_normal,
+                "refl_strength_map": refl_strength_map,
+                "refl_color_map": refl_color,
+                "base_color_map": base_color
+                }
     elif (pc.deferred_reflection and initial_stage) or not pc.deferred_reflection:
         out = {
             "render": base_color,
