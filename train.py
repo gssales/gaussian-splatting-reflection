@@ -43,9 +43,11 @@ except:
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
 
-    view_render_options = ["RGB", "3DGS Depth"]
+    view_render_options = ["RGB", "Depth"]
+    if dataset.surfel_splatting:
+        view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth']
     if dataset.deferred_reflection:
-        view_render_options = view_render_options + ["Base Color", "DR Normal Map", "Refl. Strength", "Refl. Color"]
+        view_render_options += ["Base Color", "Normal", "Refl. Strength", "Refl. Color"]
 
     if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
         sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
@@ -86,6 +88,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
+    ema_dist_for_log = 0.0
+    ema_normal_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, total_iterations), desc="Training progress")
     first_iter += 1
@@ -158,6 +162,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             Ll1depth = 0
 
+         # regularization
+        if opt.normal_consistency_loss:
+            lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
+            rend_normal  = render_pkg['normal_map']
+            surf_normal = render_pkg['surf_normal']
+            normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
+            normal_loss = lambda_normal * (normal_error).mean()
+            loss += normal_loss
+            normal_loss = normal_loss.item()
+        else:
+            normal_loss = 0
+
+            
+        if opt.depth_distortion_loss:
+            lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
+            rend_dist = render_pkg["rend_dist"]
+            dist_loss = lambda_dist * (rend_dist).mean()
+            loss += dist_loss
+            dist_loss = dist_loss.item()
+        else:
+            dist_loss = 0
+
         loss.backward()
 
         iter_end.record()
@@ -166,14 +192,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_Ll1depth_for_log = 0.4 * Ll1depth + 0.6 * ema_Ll1depth_for_log
+            ema_dist_for_log = 0.4 * dist_loss + 0.6 * ema_dist_for_log
+            ema_normal_for_log = 0.4 * normal_loss + 0.6 * ema_normal_for_log
 
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}"})
+                loss_dict = {
+                    "Loss": f"{ema_loss_for_log:.{7}f}",
+                    "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}"
+                }
+                if dataset.surfel_splatting:
+                    loss_dict = {
+                        "Loss": f"{ema_loss_for_log:.{5}f}",
+                        "distort": f"{ema_dist_for_log:.{5}f}",
+                        "normal": f"{ema_normal_for_log:.{5}f}",
+                        "Points": f"{len(gaussians.get_xyz)}"
+                    }
+                progress_bar.set_postfix(loss_dict)
+
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
+            if dataset.surfel_splatting and tb_writer is not None:
+                tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
+                tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             if (iteration in saving_iterations or iteration == total_iterations-1):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
@@ -251,6 +295,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         net_image = render_net_image(render_pkg, view_render_options, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
+                        "it": iteration,
                         "#": gaussians.get_opacity.shape[0],
                         "loss": ema_loss_for_log
                         # Add more metrics as needed
@@ -292,6 +337,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
+        tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
