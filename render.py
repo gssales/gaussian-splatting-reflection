@@ -14,7 +14,7 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render
+from gaussian_renderer import render, render_env_map
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
@@ -34,6 +34,11 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
 
+    # save env light
+    ltres = render_env_map(gaussians)
+    torchvision.utils.save_image(ltres['env_cood1'], os.path.join(model_path, 'light1_{}.png'.format(iteration)))
+    torchvision.utils.save_image(ltres['env_cood2'], os.path.join(model_path, 'light2_{}.png'.format(iteration)))
+
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering = render(view, gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)["render"]
         gt = view.original_image[0:3, :, :]
@@ -47,7 +52,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, separate_sh: bool):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree)
+        gaussians = GaussianModel(dataset.sh_degree, dataset.deferred_reflection, dataset.surfel_splatting)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]

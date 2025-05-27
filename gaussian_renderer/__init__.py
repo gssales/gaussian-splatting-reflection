@@ -10,12 +10,13 @@
 #
 
 import torch
+import torch.nn.functional as F
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from diff_surfel_rasterization import GaussianRasterizationSettings as SurfelRasterizationSettings, GaussianRasterizer as SurfelRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
-from utils.general_utils import sample_camera_rays
+from utils.general_utils import sample_camera_rays, get_env_rayd1, get_env_rayd2
 from utils.point_utils import depth_to_normal
 
 # rayd: x,3, from camera to world points
@@ -37,6 +38,11 @@ def get_refl_color(envmap: torch.Tensor, HWK, R, T, normal_map): #RT W2C
     rays_d = reflection(rays_d, normal_map)
     #rays_d = rays_d.clamp(-1, 1) # avoid numerical error when arccos
     return sample_cubemap_color(rays_d, envmap)
+
+def render_env_map(pc: GaussianModel):
+    env_cood1 = sample_cubemap_color(get_env_rayd1(512,1024), pc.get_envmap)
+    env_cood2 = sample_cubemap_color(get_env_rayd2(512,1024), pc.get_envmap)
+    return {'env_cood1': env_cood1, 'env_cood2': env_cood2}
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False, initial_stage=False):
     """
@@ -190,7 +196,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    base_color = base_color.clamp(0, 1)
     if pc.surfel_splatting:
         # additional regularizations
         render_alpha = allmap[1:2]
@@ -225,6 +230,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         surf_normal = surf_normal * (render_alpha).detach()
 
         if (pc.deferred_reflection and initial_stage) or not pc.deferred_reflection:
+            base_color = base_color.clamp(0, 1)
             out =  {
                 "render": base_color,
                 "viewspace_points": means2D,
@@ -242,6 +248,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, n_map)
 
             final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
+            final_image = final_image.clamp(0, 1)
 
             out = {
                 "render": final_image,
@@ -258,6 +265,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                 "base_color_map": base_color
                 }
     elif (pc.deferred_reflection and initial_stage) or not pc.deferred_reflection:
+        base_color = base_color.clamp(0, 1)
         out = {
             "render": base_color,
             "viewspace_points": screenspace_points,
@@ -272,6 +280,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
         final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
 
+        final_image = final_image.clamp(0, 1)
         out = {
             "render": final_image,
             "refl_strength_map": refl_strength_map,

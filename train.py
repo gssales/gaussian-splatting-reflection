@@ -41,7 +41,7 @@ try:
 except:
     SPARSE_ADAM_AVAILABLE = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
 
     view_render_options = ["RGB", "Depth"]
     if dataset.surfel_splatting:
@@ -51,6 +51,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
         sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
+
+    # if dataset.deferred_reflection and opt.densify_until_iter == 15_000:
+    #     opt.densify_until_iter = 30_000
+    if dataset.surfel_splatting and opt.opacity_cull == 0.005:
+        opt.opacity_cull = 0.05
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -90,6 +95,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_Ll1depth_for_log = 0.0
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
+
+    if opt.normal_propagation:
+        print('propagation until: {}'.format(normal_propagation_iterations))
+    print('densify until: {}'.format(densify_until_iteration))
+    print('total iter: {}'.format(total_iterations))
 
     progress_bar = tqdm(range(first_iter, total_iterations), desc="Training progress")
     first_iter += 1
@@ -208,9 +218,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         "Points": f"{len(gaussians.get_xyz)}"
                     }
                 progress_bar.set_postfix(loss_dict)
-
                 progress_bar.update(10)
-            if iteration == opt.iterations:
+
+            if iteration == total_iterations:
                 progress_bar.close()
 
             # Log and save
@@ -229,43 +239,47 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if opt.normal_propagation and iteration <= opt.init_until_iter:
-                    opacity_reset_intval = 3000
-                    densification_interval = 100
-                elif opt.normal_propagation and iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter:
-                    opacity_reset_intval = 3000 # 2:1 (reset 1: reset 0)
+                if opt.normal_propagation and iteration <= normal_propagation_iterations:
                     densification_interval = opt.densification_interval_when_prop
+                    opacity_lr = 0.05
                 else:
-                    opacity_reset_intval = opt.opacity_reset_interval
                     densification_interval = opt.densification_interval
+                    opacity_lr = opt.opacity_lr
 
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, radii)
-
-                if  opt.color_sabotage and (opt.init_until_iter < iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter) and iteration % 1000 == 0:
-                    outside_msk = get_outside_msk()
-                    gaussians.dist_color(exclusive_msk=outside_msk)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold, radii)
 
                 if opt.normal_propagation:
                     opacity_reset = False
-                    if iteration % opacity_reset_intval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                         opacity_reset = True
                         outside_msk = get_outside_msk()
                         gaussians.reset_opacity_norm_prop0()
-                        gaussians.reset_refl(exclusive_msk=outside_msk)
-                    if  opt.opac_lr0_interval > 0 and (opt.init_until_iter < iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter) and iteration % opt.opac_lr0_interval == 0: ## 200->50
-                        gaussians.set_opacity_lr(opt.opacity_lr)
-                    if  (opt.init_until_iter < iteration <= opt.normal_prop_until_iter + opt.longer_prop_iter) and iteration % 1000 == 0:
+                        if dataset.deferred_reflection:
+                            gaussians.reset_refl(exclusive_msk=outside_msk)
+
+                    if  opt.opac_lr0_interval > 0 and (opt.init_until_iter < iteration <= normal_propagation_iterations) and iteration % opt.opac_lr0_interval == 0: ## 200->50
+                        gaussians.set_opacity_lr(opacity_lr)
+
+                    if  (opt.init_until_iter < iteration <= normal_propagation_iterations) and iteration % 1000 == 0:
                         if not opacity_reset:
                             outside_msk = get_outside_msk()
                             gaussians.reset_opacity_norm_prop1(exclusive_msk=outside_msk)
                             gaussians.reset_scale(exclusive_msk=outside_msk)
-                            if opt.opac_lr0_interval > 0 and iteration != opt.normal_prop_until_iter + opt.longer_prop_iter:
+                            if opt.opac_lr0_interval > 0 and iteration != normal_propagation_iterations:
                                 gaussians.set_opacity_lr(0.0)
 
                 elif iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                        gaussians.reset_opacity()
+                    gaussians.reset_opacity()
+                    gaussians.set_opacity_lr(opacity_lr)
+                    if dataset.deferred_reflection:
+                        outside_msk = get_outside_msk()
+                        gaussians.reset_refl(exclusive_msk=outside_msk)
+
+            if opt.color_sabotage and (opt.init_until_iter < iteration <= opt.color_sabotage_until_iter) and iteration % 1000 == 0:
+                outside_msk = get_outside_msk()
+                gaussians.dist_color(exclusive_msk=outside_msk)
 
             # Optimizer step
             if iteration < total_iterations:
@@ -350,13 +364,21 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs)
+                    image = torch.clamp(render_pkg["render"], 0.0, 1.0)
+                    normal = torch.clamp(render_pkg["normal_map"], 0.0, 1.0)
+                    normal = (normal+1)/2
+                    if 'refl_strength_map' in render_pkg:
+                        refl_str = torch.clamp(render_pkg["refl_strength_map"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if train_test_exp:
                         image = image[..., image.shape[-1] // 2:]
                         gt_image = gt_image[..., gt_image.shape[-1] // 2:]
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        tb_writer.add_images(config['name'] + "_view_{}/normal_map".format(viewpoint.image_name), normal[None], global_step=iteration)
+                        if 'refl_strength_map' in render_pkg:
+                            tb_writer.add_images(config['name'] + "_view_{}/refl_strength_map".format(viewpoint.image_name), refl_str[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()

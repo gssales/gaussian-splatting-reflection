@@ -67,6 +67,8 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
+        if args.deferred_reflection:
+            self.cameras_center = -scene_info.nerf_normalization['translate']
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
