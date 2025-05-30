@@ -107,6 +107,7 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
         self.optimizer_type = "default"
         
+        self.opacity_cull = 0.005
         self.refl_lr = 0.006 # TODO
         self.envmap_cubemap_lr = 0.05 # TODO
         self.refl_init_value = 1e-3 # TODO
@@ -120,10 +121,11 @@ class OptimizationParams(ParamGroup):
         self.use_env_scope = False # TODO
         self.env_scope_center = [0.,0.,0.] # TODO
         self.env_scope_radius = 0.0 # TODO
+        
+        self.color_sabotage_until_iter = 24_000 # TODO
 
         self.lambda_dist = 0.0 # TODO
         self.lambda_normal = 0.05 # TODO
-        self.opacity_cull = 0.05 # TODO
 
         self.color_sabotage = False # TODO
         self.normal_propagation = False # TODO
@@ -149,6 +151,6 @@ def get_combined_args(parser : ArgumentParser):
 
     merged_dict = vars(args_cfgfile).copy()
     for k,v in vars(args_cmdline).items():
-        if v != None:
+        if v != None and k not in merged_dict:
             merged_dict[k] = v
     return Namespace(**merged_dict)

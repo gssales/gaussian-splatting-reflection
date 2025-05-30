@@ -31,16 +31,27 @@ except:
 class GaussianModel:
 
     def setup_functions(self):
-        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
+        def build_covariance_from_scaling_rotation_3d(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             actual_covariance = L @ L.transpose(1, 2)
             symm = strip_symmetric(actual_covariance)
             return symm
         
+        def build_covariance_from_scaling_rotation_2d(center, scaling, scaling_modifier, rotation):
+            RS = build_scaling_rotation(torch.cat([scaling * scaling_modifier, torch.ones_like(scaling)], dim=-1), rotation).permute(0,2,1)
+            trans = torch.zeros((center.shape[0], 4, 4), dtype=torch.float, device="cuda")
+            trans[:,:3,:3] = RS
+            trans[:, 3,:3] = center
+            trans[:, 3, 3] = 1
+            return trans
+        
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
 
-        self.covariance_activation = build_covariance_from_scaling_rotation
+        if self.surfel_splatting == True:
+            self.covariance_activation = build_covariance_from_scaling_rotation_2d
+        else:
+            self.covariance_activation = build_covariance_from_scaling_rotation_3d
 
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
@@ -51,7 +62,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree, deferred_reflection, optimizer_type="default"):
+    def __init__(self, sh_degree, deferred_reflection, surfel_splatting, optimizer_type="default"):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
         self.max_sh_degree = sh_degree  
@@ -72,6 +83,8 @@ class GaussianModel:
         self._refl_strength = torch.empty(0)
         self.init_refl_value = 1e-3
         self.env_map = None
+
+        self.surfel_splatting = surfel_splatting
 
         self.setup_functions()
 
@@ -179,7 +192,10 @@ class GaussianModel:
         return ndir
 
     def get_covariance(self, scaling_modifier = 1):
-        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+        if self.surfel_splatting == True:
+            return self.covariance_activation(self.get_xyz, self.get_scaling, scaling_modifier, self._rotation)
+        else:
+            return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
@@ -196,9 +212,13 @@ class GaussianModel:
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
-        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
-        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
-        rots[:, 0] = 1
+        if self.surfel_splatting == True:
+            scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 2)
+            rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
+        else:
+            scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+            rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+            rots[:, 0] = 1
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         if self.deferred_reflection == True:
@@ -559,7 +579,11 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
 
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
+        if self.surfel_splatting == True:
+            stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
+            means = torch.zeros_like(stds)
+        else:
+            means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
@@ -620,5 +644,8 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        if self.surfel_splatting:
+            self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
+        else:
+            self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
