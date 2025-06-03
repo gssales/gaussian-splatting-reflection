@@ -2,7 +2,6 @@ name: gs_reflection
 channels:
   - pytorch
   - nvidia
-  - conda-forge
   - defaults
 dependencies:
   - python=3.7.13
@@ -12,9 +11,9 @@ dependencies:
   - torchvision=0.14.1
   - torchaudio=0.13.1
   - pytorch-cuda=11.7
-  - plyfile
-  - tqdm
   - pip:
+    - plyfile
+    - tqdm
     - submodules/cubemapencoder
     - submodules/diff-gaussian-rasterization
     - submodules/diff-surfel-rasterization
