@@ -1,9 +1,8 @@
-FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
+FROM nvidia/cuda:11.8.0-devel-ubuntu20.04
 
 # Install base utilities
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y build-essential wget ninja-build unzip libgl-dev ffmpeg\
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -15,15 +14,9 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
 # Put conda in path so we can use conda activate
 ENV PATH=$CONDA_DIR/bin:$PATH
 
-# Install necessary packages
-RUN apt update
-
 # Create a workspace directory and clone the repository
 WORKDIR /workspace
-RUN git clone https://github.com/gssales/gaussian-splatting-reflection --recursive
+COPY . .
 
-# Create a Conda environment and activate it
-WORKDIR /workspace/gaussian-splatting-reflection
-
-RUN conda env create --file environment.yml && conda init bash && exec bash && conda activate gs_reflection
+RUN conda env create --file environment-linux.yml && conda init bash && exec bash && conda activate gs_reflection
 
