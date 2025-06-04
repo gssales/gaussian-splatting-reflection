@@ -1,5 +1,7 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu20.04
 
+ENV TORCH_CUDA_ARCH_LIST="3.5;5.0;6.0;6.1;7.0;7.5;8.0;8.6+PTX"
+
 # Install base utilities
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
