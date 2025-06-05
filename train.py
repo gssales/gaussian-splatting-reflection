@@ -208,7 +208,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{7}f}",
-                    "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}"
+                    "Points": f"{len(gaussians.get_xyz)}"
                 }
                 if dataset.surfel_splatting:
                     loss_dict = {
@@ -366,8 +366,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 for idx, viewpoint in enumerate(config['cameras']):
                     render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                    normal = torch.clamp(render_pkg["normal_map"], 0.0, 1.0)
-                    normal = (normal+1)/2
+                    if 'normal_map' in render_pkg:
+                        normal = torch.clamp(render_pkg["normal_map"], 0.0, 1.0)
+                        normal = (normal+1)/2
                     if 'refl_strength_map' in render_pkg:
                         refl_str = torch.clamp(render_pkg["refl_strength_map"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
@@ -376,7 +377,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                         gt_image = gt_image[..., gt_image.shape[-1] // 2:]
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        tb_writer.add_images(config['name'] + "_view_{}/normal_map".format(viewpoint.image_name), normal[None], global_step=iteration)
+                        if 'normal_map' in render_pkg:
+                            tb_writer.add_images(config['name'] + "_view_{}/normal_map".format(viewpoint.image_name), normal[None], global_step=iteration)
                         if 'refl_strength_map' in render_pkg:
                             tb_writer.add_images(config['name'] + "_view_{}/refl_strength_map".format(viewpoint.image_name), refl_str[None], global_step=iteration)
                         if iteration == testing_iterations[0]:

@@ -39,13 +39,8 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
         
     orig_w, orig_h = cam_info.image.size
     if args.resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
-        HWK = None
-        if cam_info.K is not None:
-            K = cam_info.K.copy()
-            K[:2] = K[:2] * resolution_scale
-            # Height Width K (Matriz intrinseca)
-            HWK = (resolution[1], resolution[0], K)
+        scale = float(args.resolution) * float(resolution_scale)
+        resolution = (round(orig_w / scale), round(orig_h / scale))
     else:  # should be a type that converts to float
         if args.resolution == -1:
             if orig_w > 1600:
@@ -59,15 +54,14 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
                 global_down = 1
         else:
             global_down = orig_w / args.resolution
-    
-
         scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
-        HWK = None
-        if cam_info.K is not None:
-            K = cam_info.K.copy()
-            K[:2] = K[:2] * scale
-            HWK = (resolution[1], resolution[0], K)
+        resolution = (round(orig_w / scale), round(orig_h / scale))
+    
+    HWK = None
+    if cam_info.K is not None:
+        K = cam_info.K.copy()
+        K[:2] = K[:2] / scale
+        HWK = (resolution[1], resolution[0], K)
     
     refl_path = os.path.join(os.path.dirname(os.path.dirname(cam_info.image_path)), 'image_msk')
     refl_path = os.path.join(refl_path, os.path.basename(cam_info.image_path))
