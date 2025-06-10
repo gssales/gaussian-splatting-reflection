@@ -40,19 +40,28 @@ def colormap(map, cmap="turbo"):
 
 def render_net_image(render_pkg, render_items, render_mode, camera):
     output = render_items[render_mode].lower()
-    if output == 'depth':
-        net_image = render_pkg['depth']
-    elif output == 'alpha':
+    if output == 'alpha':
         net_image = render_pkg["rend_alpha"]
+    elif output == 'mask':
+        net_image = render_pkg["env_scope_mask"].repeat(3,1,1)
     elif output == 'normal':
-        net_image = render_pkg["normal_map"]
+        net_image = render_pkg["rend_normal"]
         net_image = (net_image+1)/2
+    elif output == 'depth':
+        net_image = render_pkg["surf_depth"]
     elif output == 'base color':
         net_image = render_pkg["base_color_map"]
     elif output == 'refl. strength':
-        net_image = render_pkg["refl_strength_map"]#.repeat(3,1,1)
+        net_image = render_pkg["refl_strength_map"].repeat(3,1,1)
     elif output == 'refl. color':
         net_image = render_pkg["refl_color_map"]
+    elif output == 'edge':
+        net_image = render_pkg["surf_normal"]
+        net_image = (net_image+1)/2
+    elif output == 'curvature':
+        net_image = render_pkg["rend_normal"]
+        net_image = (net_image+1)/2
+        net_image = gradient_map(net_image)
     else:
         net_image = render_pkg["render"]
 

@@ -57,6 +57,7 @@ namespace FORWARD
 		int W, int H,
 		float focal_x, float focal_y,
 		const float2* points_xy_image,
+		const bool* env_scope_mask,
 		const float* features,
 		const float* refl_strengths,
 		const float* transMats,

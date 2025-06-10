@@ -29,6 +29,7 @@ def rasterize_gaussians(
     rotations,
     cov3Ds_precomp,
     raster_settings,
+    env_scope_mask,
 ):
     return _RasterizeGaussians.apply(
         means3D,
@@ -41,6 +42,7 @@ def rasterize_gaussians(
         rotations,
         cov3Ds_precomp,
         raster_settings,
+        env_scope_mask,
     )
 
 class _RasterizeGaussians(torch.autograd.Function):
@@ -57,12 +59,14 @@ class _RasterizeGaussians(torch.autograd.Function):
         rotations,
         cov3Ds_precomp,
         raster_settings,
+        env_scope_mask,
     ):
 
         # Restructure arguments the way that the C++ lib expects them
         args = (
             raster_settings.bg, 
             means3D,
+            env_scope_mask,
             colors_precomp,
             refl_strengths,
             opacities,
@@ -158,6 +162,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_rotations,
             grad_cov3Ds_precomp,
             None,
+            None,
         )
 
         return grads
@@ -192,7 +197,7 @@ class GaussianRasterizer(nn.Module):
             
         return visible
 
-    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, refl_strengths = None, scales = None, rotations = None, cov3D_precomp = None):
+    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, refl_strengths = None, scales = None, rotations = None, cov3D_precomp = None, env_scope_mask = None):
         
         raster_settings = self.raster_settings
 
@@ -213,6 +218,9 @@ class GaussianRasterizer(nn.Module):
             rotations = torch.Tensor([]).cuda()
         if cov3D_precomp is None:
             cov3D_precomp = torch.Tensor([]).cuda()
+            
+        if env_scope_mask is None:
+            env_scope_mask = torch.Tensor([]).cuda()
         
 
         # Invoke C++/CUDA rasterization routine
@@ -226,6 +234,7 @@ class GaussianRasterizer(nn.Module):
             scales, 
             rotations,
             cov3D_precomp,
-            raster_settings, 
+            raster_settings,
+            env_scope_mask,
         )
 

@@ -261,6 +261,7 @@ renderCUDA(
 	int W, int H,
 	float focal_x, float focal_y,
 	const float2* __restrict__ points_xy_image,
+	const bool* __restrict__ env_scope_mask,
 	const float* __restrict__ features,
 	const float* __restrict__ refl_stengths,
 	const float* __restrict__ transMats,
@@ -306,6 +307,7 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 	float refl_strength = 0.0f;
+	float mask = 0.0f;
 
 
 #if RENDER_AXUTILITY
@@ -420,7 +422,10 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-				refl_strength += refl_stengths[collected_id[j]] * w;
+			refl_strength += refl_stengths[collected_id[j]] * w;
+
+			if (env_scope_mask[collected_id[j]])
+				mask = 1.0f;
 
 			T = test_T;
 
@@ -449,6 +454,7 @@ renderCUDA(
 		for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
+		out_others[pix_id + MASK_OFFSET * H * W] = mask;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
 #endif
 	}
@@ -461,6 +467,7 @@ void FORWARD::render(
 	int W, int H,
 	float focal_x, float focal_y,
 	const float2* means2D,
+	const bool* env_scope_mask,
 	const float* colors,
 	const float* refl_strengths,
 	const float* transMats,
@@ -479,6 +486,7 @@ void FORWARD::render(
 		W, H,
 		focal_x, focal_y,
 		means2D,
+		env_scope_mask,
 		colors,
 		refl_strengths,
 		transMats,
