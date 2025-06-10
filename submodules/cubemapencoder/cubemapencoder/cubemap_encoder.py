@@ -90,7 +90,7 @@ class CubemapEncoder(nn.Module):
         self.seamless = 1
 
         self.params = nn.ParameterDict({
-            'Cubemap_texture': nn.Parameter(torch.rand(6, self.output_dim, resolution, resolution) * 0.2 + 0.5), 
+            'Cubemap_texture': nn.Parameter(torch.rand(6, self.output_dim, resolution, resolution) - 0.5), 
             'Cubemap_failv': nn.Parameter(torch.zeros(self.output_dim))
         })
         self.n_elems = 6 * self.output_dim * resolution * resolution + self.output_dim

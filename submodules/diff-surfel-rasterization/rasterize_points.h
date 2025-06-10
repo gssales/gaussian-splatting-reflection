@@ -19,6 +19,7 @@ std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torc
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& env_scope_mask,
 	const torch::Tensor& colors,
 	const torch::Tensor &refl_strengths,
 	const torch::Tensor& opacity,

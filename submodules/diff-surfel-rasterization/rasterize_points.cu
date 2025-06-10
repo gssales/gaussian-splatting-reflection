@@ -40,6 +40,7 @@ std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torc
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& env_scope_mask,
 	const torch::Tensor& colors,
 	const torch::Tensor &refl_strengths,
 	const torch::Tensor& opacity,
@@ -84,7 +85,7 @@ RasterizeGaussiansCUDA(
   auto float_opts = means3D.options().dtype(torch::kFloat32);
 
   torch::Tensor out_color = torch::full({NUM_CHANNELS, H, W}, 0.0, float_opts);
-  torch::Tensor out_others = torch::full({3+3+1, H, W}, 0.0, float_opts);
+  torch::Tensor out_others = torch::full({3+3+1+1, H, W}, 0.0, float_opts);
 
 	torch::Tensor out_refl_strength_map = torch::full({0, H, W}, 0.0, float_opts);
 	float *out_refl_strength_mapptr = nullptr;
@@ -119,6 +120,7 @@ RasterizeGaussiansCUDA(
 		background.contiguous().data<float>(),
 		W, H,
 		means3D.contiguous().data<float>(),
+		env_scope_mask.contiguous().data<bool>(),
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data<float>(), 
 		refl_strengths.contiguous().data<float>(),
