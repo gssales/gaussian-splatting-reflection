@@ -13,92 +13,85 @@ import os
 from argparse import ArgumentParser
 import time
 
-mipnerf360_outdoor_scenes = ["bicycle", "flowers", "garden", "stump", "treehill"]
-mipnerf360_indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
-tanks_and_temples_scenes = ["truck", "train"]
-deep_blending_scenes = ["drjohnson", "playroom"]
+ref_real_scenes = ["ref_real/sedan", "ref_real/gardenspheres", "ref_real/toycar"]
+refnerf_scenes = ["shiny_blender/helmet","shiny_blender/car","shiny_blender/ball","shiny_blender/teapot","shiny_blender/coffee","shiny_blender/toaster"]
+nerf_synthetic_scenes = ["nerf_synthetic/ship","nerf_synthetic/ficus","nerf_synthetic/lego","nerf_synthetic/mic","nerf_synthetic/hotdog","nerf_synthetic/chair","nerf_synthetic/materials","nerf_synthetic/drums"]
+glossy_synthetic_scenes = ["GlossySynthetic/bell","GlossySynthetic/tbell","GlossySynthetic/potion","GlossySynthetic/teapot","GlossySynthetic/luyu","GlossySynthetic/cat"]
 
 parser = ArgumentParser(description="Full evaluation script parameters")
 parser.add_argument("--skip_training", action="store_true")
 parser.add_argument("--skip_rendering", action="store_true")
 parser.add_argument("--skip_metrics", action="store_true")
 parser.add_argument("--output_path", default="./eval")
-parser.add_argument("--use_depth", action="store_true")
-parser.add_argument("--use_expcomp", action="store_true")
-parser.add_argument("--fast", action="store_true")
-parser.add_argument("--aa", action="store_true")
 
-
+extra_args = {
+    "ref_real/sedan": " -r 8 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138",
+    "ref_real/gardenspheres": " -r 6 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974",
+    "ref_real/toycar": " -r 6 --env_scope_center 0.486 1.108 3.72 --env_scope_radius 2.507",
+}
 
 
 args, _ = parser.parse_known_args()
 
 all_scenes = []
-all_scenes.extend(mipnerf360_outdoor_scenes)
-all_scenes.extend(mipnerf360_indoor_scenes)
-all_scenes.extend(tanks_and_temples_scenes)
-all_scenes.extend(deep_blending_scenes)
+all_scenes.extend(ref_real_scenes)
+all_scenes.extend(refnerf_scenes)
+all_scenes.extend(nerf_synthetic_scenes)
+all_scenes.extend(glossy_synthetic_scenes)
 
 if not args.skip_training or not args.skip_rendering:
-    parser.add_argument('--mipnerf360', "-m360", required=True, type=str)
-    parser.add_argument("--tanksandtemples", "-tat", required=True, type=str)
-    parser.add_argument("--deepblending", "-db", required=True, type=str)
+    parser.add_argument('--ref_real', type=str, default="/mnt/data")
+    parser.add_argument('--refnerf', type=str, default="/mnt/data")
+    parser.add_argument('--nerf_synthetic', type=str, default="/mnt/data")
+    parser.add_argument('--glossy_synthetic', type=str, default="/mnt/data")
     args = parser.parse_args()
 if not args.skip_training:
-    common_args = " --disable_viewer --quiet --eval --test_iterations -1 "
+    common_args = " --disable_viewer --quiet --eval --test_iterations -1 --save_iterations 7000 30000 --normal_propagation --color_sabotage"
     
-    if args.aa:
-        common_args += " --antialiasing "
-    if args.use_depth:
-        common_args += " -d depths2/ "
-
-    if args.use_expcomp:
-        common_args += " --exposure_lr_init 0.001 --exposure_lr_final 0.0001 --exposure_lr_delay_steps 5000 --exposure_lr_delay_mult 0.001 --train_test_exp "
-
-    if args.fast:
-        common_args += " --optimizer_type sparse_adam "
-
     start_time = time.time()
-    for scene in mipnerf360_outdoor_scenes:
-        source = args.mipnerf360 + "/" + scene
-        os.system("python train.py -s " + source + " -i images_4 -m " + args.output_path + "/" + scene + common_args)
-    for scene in mipnerf360_indoor_scenes:
-        source = args.mipnerf360 + "/" + scene
-        os.system("python train.py -s " + source + " -i images_2 -m " + args.output_path + "/" + scene + common_args)
-    m360_timing = (time.time() - start_time)/60.0
-
+    for scene in ref_real_scenes:
+        source = args.ref_real + "/" + scene
+        extra = extra_args[scene]
+        more_args = " --init_until_iter 3000 --lambda_dist 100 --opacity_reset_interval 1000 --use_env_scope"
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + extra + more_args)
+    ref_real_timing = (time.time() - start_time)/60.0
+    
     start_time = time.time()
-    for scene in tanks_and_temples_scenes:
-        source = args.tanksandtemples + "/" + scene
-        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
-    tandt_timing = (time.time() - start_time)/60.0
-
+    for scene in refnerf_scenes:
+        source = args.refnerf + "/" + scene
+        more_args = " --lambda_dist 1000 --opacity_reset_interval 1000 --synthetic"
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + more_args)
+    refnerf_timing = (time.time() - start_time)/60.0
+    
     start_time = time.time()
-    for scene in deep_blending_scenes:
-        source = args.deepblending + "/" + scene
-        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
-    db_timing = (time.time() - start_time)/60.0
+    for scene in nerf_synthetic_scenes:
+        source = args.nerf_synthetic + "/" + scene
+        more_args = " --lambda_dist 1000 --opacity_reset_interval 1000 --synthetic"
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + more_args)
+    nerf_synthetic_timing = (time.time() - start_time)/60.0
+    
+    start_time = time.time()
+    for scene in glossy_synthetic_scenes:
+        source = args.glossy_synthetic + "/" + scene
+        more_args = " --lambda_dist 1000 --opacity_reset_interval 1000 --synthetic"
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + more_args)
+    glossy_synthetic_timing = (time.time() - start_time)/60.0
 
-with open(os.path.join(args.output_path,"timing.txt"), 'w') as file:
-    file.write(f"m360: {m360_timing} minutes \n tandt: {tandt_timing} minutes \n db: {db_timing} minutes\n")
+    with open(os.path.join(args.output_path,"timing.txt"), 'w') as file:
+        file.write(f"ref_real: {ref_real_timing} minutes \n shiny_blender: {refnerf_timing} minutes \n nerf_synthetic: {nerf_synthetic_timing} minutes \n GlossySynthetic: {glossy_synthetic_timing} minutes \n")
 
 if not args.skip_rendering:
     all_sources = []
-    for scene in mipnerf360_outdoor_scenes:
-        all_sources.append(args.mipnerf360 + "/" + scene)
-    for scene in mipnerf360_indoor_scenes:
-        all_sources.append(args.mipnerf360 + "/" + scene)
-    for scene in tanks_and_temples_scenes:
-        all_sources.append(args.tanksandtemples + "/" + scene)
-    for scene in deep_blending_scenes:
-        all_sources.append(args.deepblending + "/" + scene)
+    for scene in ref_real_scenes:
+        all_sources.append(args.ref_real + "/" + scene)
+    for scene in refnerf_scenes:
+        all_sources.append(args.refnerf + "/" + scene + " --render_normals")
+    for scene in nerf_synthetic_scenes:
+        all_sources.append(args.nerf_synthetic + "/" + scene)
+    for scene in glossy_synthetic_scenes:
+        all_sources.append(args.glossy_synthetic + "/" + scene)
     
     common_args = " --quiet --eval --skip_train"
-    
-    if args.aa:
-        common_args += " --antialiasing "
-    if args.use_expcomp:
-        common_args += " --train_test_exp "
 
     for scene, source in zip(all_scenes, all_sources):
         os.system("python render.py --iteration 7000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
