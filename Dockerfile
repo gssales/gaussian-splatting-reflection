@@ -28,7 +28,7 @@ SHELL ["conda", "run", "-n", "gs_reflection", "/bin/bash", "-c"]
 RUN pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113 \
   && pip install submodules/diff-surfel-rasterization \
   && pip install submodules/cubemapencoder \
-  && pip install submodules/fused_ssim \
+  && pip install submodules/fused-ssim \
   && pip install submodules/simple-knn
 
 # ENTRYPOINT ["conda", "run", "-n", "gs_reflection", "/bin/bash", "-c"]
