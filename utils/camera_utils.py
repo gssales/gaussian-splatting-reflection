@@ -43,15 +43,13 @@ def loadCam(args, id, cam_info, resolution_scale):
         K[:2] = K[:2] / scale
         HWK = (resolution[1], resolution[0], K)
 
-    if len(cam_info.image.split()) > 3:
-        import torch
-        resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in cam_info.image.split()[:3]], dim=0)
-        loaded_mask = PILtoTorch(cam_info.image.split()[3], resolution)
-        gt_image = resized_image_rgb
-    else:
-        resized_image_rgb = PILtoTorch(cam_info.image, resolution)
-        loaded_mask = None
-        gt_image = resized_image_rgb
+    resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+
+    gt_image = resized_image_rgb[:3, ...]
+    loaded_mask = None
+
+    if resized_image_rgb.shape[1] == 4:
+        loaded_mask = resized_image_rgb[3:4, ...]
 
     return Camera(resolution, colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 

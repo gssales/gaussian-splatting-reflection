@@ -30,7 +30,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(gts_path, exist_ok=True)
 
     if render_normals:
-        normals_path = os.path.join(model_path, name, "ref_gs_{}".format(iteration), "normals")
+        normals_path = os.path.join(model_path, name, "ours_{}".format(iteration), "normals")
         makedirs(normals_path, exist_ok=True)
 
     # save env light
@@ -62,10 +62,10 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, render_normals)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, render_normals)
 
 if __name__ == "__main__":
     # Set up command line argument parser

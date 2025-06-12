@@ -42,8 +42,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
 
-    total_iterations = opt.iterations + 1
-    densify_until_iteration = opt.densify_until_iter
+    total_iterations = opt.iterations + opt.longer_prop_iter + 1
+    densify_until_iteration = opt.densify_until_iter + opt.longer_prop_iter
+    if opt.normal_propagation:
+        normal_prop_until_iter = opt.normal_prop_until_iter + opt.longer_prop_iter
     
     if opt.use_env_scope:
         center = [float(c) for c in opt.env_scope_center]
@@ -72,7 +74,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
     print('densify until: {}'.format(densify_until_iteration))
     print('total iter: {}'.format(total_iterations))
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, total_iterations-1), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, total_iterations):
 
@@ -143,8 +145,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
         # in synthetic scenes, forces gaussian of the same color as the background to be transparent
         if opt.synthetic:
-            threshold = 0.99 if dataset.white_background else 0.01
-            msk = (image < threshold).all(dim=0)
+            if dataset.white_background:
+                msk = (image > 0.99).all(dim=0)
+            else:
+                msk = (image < 0.01).all(dim=0)
             alpha_error = torch.zeros_like(alpha, dtype=alpha.dtype, device=alpha.device)
             alpha_error[:,msk] = alpha[:,msk]
             loss += 0.1 * alpha_error.mean()
@@ -189,7 +193,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if opt.normal_propagation and iteration <= opt.normal_prop_until_iter:
+                if opt.normal_propagation and iteration <= normal_prop_until_iter:
                     densification_interval = opt.densification_interval_when_prop
                 else:
                     densification_interval = opt.densification_interval
@@ -198,14 +202,14 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
                 
                 opacity_reset_0 = False
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                if iteration % opt.opacity_reset_interval == 0:
                     opacity_reset_0 = True
                     gaussians.reset_opacity()
                 
-                if  opt.opac_lr0_interval > 0 and iteration % opt.opac_lr0_interval == 0 and (opt.init_until_iter < iteration <= opt.normal_prop_until_iter): ## 200->50
+                if opt.opac_lr0_interval > 0 and (iteration-500) % opt.opac_lr0_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter): ## 200->50
                     gaussians.set_opacity_lr(opt.opacity_lr)
 
-                if (iteration-500) % opt.normal_prop_interval == 0 and (opt.init_until_iter < iteration <= opt.normal_prop_until_iter):
+                if (iteration-500) % opt.normal_prop_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter):
                     if not opacity_reset_0 and opt.normal_propagation:
                         outside_msk = get_outside_msk()
                         opacity_old = gaussians.get_opacity
@@ -226,8 +230,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                             gaussians.set_opacity_lr(0.0)
 
                     if opt.color_sabotage:
-                        color_mask = (refl > 0.1).flatten()                        
                         refl = gaussians.get_refl
+                        color_mask = (refl > 0.1).flatten()                        
                         outside_msk = get_outside_msk()
                         if outside_msk is not None:
                             color_mask = torch.logical_or(color_mask, outside_msk)
