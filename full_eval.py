@@ -18,7 +18,7 @@ import time
 # nerf_synthetic_scenes = ["nerf_synthetic/ship","nerf_synthetic/ficus","nerf_synthetic/lego","nerf_synthetic/mic","nerf_synthetic/hotdog","nerf_synthetic/chair","nerf_synthetic/materials","nerf_synthetic/drums"]
 # glossy_synthetic_scenes = ["GlossySynthetic/bell","GlossySynthetic/tbell","GlossySynthetic/potion","GlossySynthetic/teapot","GlossySynthetic/luyu","GlossySynthetic/cat"]
 
-ref_real_scenes = ["ref_real/sedan", "ref_real/gardenspheres", "ref_real/toycar"]
+ref_real_scenes = []
 refnerf_scenes = ["shiny_blender/helmet","shiny_blender/ball","shiny_blender/coffee"]
 nerf_synthetic_scenes = []
 glossy_synthetic_scenes = ["GlossySynthetic/tbell","GlossySynthetic/potion"]
@@ -37,8 +37,8 @@ extra_args = {
     "shiny_blender/helmet": " --init_until_iter 0",
     "shiny_blender/ball": " -w --init_until_iter 0 --sythetic",
     "shiny_blender/coffee": " --init_until_iter 3000 --synthetic",
-    "GlossySynthetic/tbell": " -w --init_until_iter 0 --sythetic",
-    "GlossySynthetic/potion": " -w --init_until_iter 0 --sythetic"
+    "GlossySynthetic/tbell": " -w --init_until_iter 20 --sythetic",
+    "GlossySynthetic/potion": " -w --init_until_iter 20 --sythetic"
 }
 
 
@@ -70,19 +70,22 @@ if not args.skip_training:
     start_time = time.time()
     for scene in refnerf_scenes:
         source = args.refnerf + "/" + scene
-        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
+        extra = extra_args[scene]
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + extra)
     refnerf_timing = (time.time() - start_time)/60.0
     
     start_time = time.time()
     for scene in nerf_synthetic_scenes:
         source = args.nerf_synthetic + "/" + scene
-        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
+        extra = extra_args[scene]
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + extra)
     nerf_synthetic_timing = (time.time() - start_time)/60.0
     
     start_time = time.time()
     for scene in glossy_synthetic_scenes:
         source = args.glossy_synthetic + "/" + scene
-        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
+        extra = extra_args[scene]
+        os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + extra)
     glossy_synthetic_timing = (time.time() - start_time)/60.0
 
     with open(os.path.join(args.output_path,"timing.txt"), 'w') as file:
