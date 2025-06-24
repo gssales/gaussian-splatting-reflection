@@ -29,7 +29,7 @@ extra_args = {
     "ref_real/sedan": " -r 8 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138",
     "ref_real/gardenspheres": " -r 4 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974",
     "ref_real/toycar": " -r 4 --env_scope_center 0.486 1.108 3.72 --env_scope_radius 2.507",
-    "shiny_blender/ball": " -w --init_until_iter 0 --sythetic",
+    "shiny_blender/ball": " -w --init_until_iter 0 --synthetic",
     "shiny_blender/car": " --opacity_reset_interval 1000 --synthetic",
     "shiny_blender/coffee": " --init_until_iter 3000 --synthetic  --densification_interval_when_prop 500",
     "shiny_blender/helmet": " --init_until_iter 0",
@@ -40,15 +40,15 @@ extra_args = {
     "GlossySynthetic/cat": " --opacity_reset_interval 1000 --synthetic",
     "GlossySynthetic/horse": " --init_until_iter 20 --synthetic --densification_interval_when_prop 500",
     "GlossySynthetic/luyu": " --opacity_reset_interval 1000 --synthetic",
-    "GlossySynthetic/potion": " -w --init_until_iter 20 --sythetic",
-    "GlossySynthetic/tbell": " -w --init_until_iter 20 --sythetic",
+    "GlossySynthetic/potion": " -w --init_until_iter 20 --synthetic",
+    "GlossySynthetic/tbell": " -w --init_until_iter 20 --synthetic",
     "GlossySynthetic/teapot": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/chair": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/drums": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/ficus": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/hotdog": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/lego": " --opacity_reset_interval 1000 --synthetic",
-    "nerf_synthetic/materias": " --opacity_reset_interval 1000 --synthetic",
+    "nerf_synthetic/materials": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/mic": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/ship": " --opacity_reset_interval 1000 --synthetic"
 }
@@ -75,7 +75,7 @@ if not args.skip_training:
     for scene in ref_real_scenes:
         source = args.ref_real + "/" + scene
         extra = extra_args[scene]
-        more_args = " --iterations 60000 --init_until_iter 3000 --lambda_dist 100 --opacity_reset_interval 1000 --use_env_scope"
+        more_args = " --init_until_iter 3000 --lambda_dist 100 --use_env_scope  --densification_interval_when_prop 500 --longer_prop_iter 15000"
         os.system("python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + extra + more_args)
     ref_real_timing = (time.time() - start_time)/60.0
     
