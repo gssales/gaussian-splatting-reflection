@@ -106,20 +106,19 @@ if not args.skip_training:
 if not args.skip_rendering:
     all_sources = []
     for scene in ref_real_scenes:
-        all_sources.append(args.ref_real + "/" + scene)
+        all_sources.append(args.ref_real + "/" + scene + " --iteration 30000")
+        all_sources.append(args.ref_real + "/" + scene + " --iteration 60000")
     for scene in refnerf_scenes:
-        all_sources.append(args.refnerf + "/" + scene + " --render_normals")
+        all_sources.append(args.refnerf + "/" + scene + " --iteration 30000 --render_normals")
     for scene in nerf_synthetic_scenes:
-        all_sources.append(args.nerf_synthetic + "/" + scene)
+        all_sources.append(args.nerf_synthetic + "/" + scene + " --iteration 30000")
     for scene in glossy_synthetic_scenes:
-        all_sources.append(args.glossy_synthetic + "/" + scene)
+        all_sources.append(args.glossy_synthetic + "/" + scene + " --iteration 30000")
     
     common_args = " --quiet --eval --skip_train"
 
     for scene, source in zip(all_scenes, all_sources):
-        # os.system("python render.py --iteration 7000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
-        os.system("python render.py --iteration 30000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
-        os.system("python render.py --iteration 60000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
+        os.system("python render.py -s " + source + " -m " + args.output_path + "/" + scene + common_args)
 
 if not args.skip_metrics:
     scenes_string = ""
