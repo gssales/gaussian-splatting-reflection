@@ -98,6 +98,11 @@ class CubemapEncoder(nn.Module):
     def __repr__(self):
         return f"CubemapEncoder: input_dim={self.input_dim} output_dim={self.output_dim} resolution={self.resolution} -> {self.n_elems} interpolation={self.interpolation} seamless={self.seamless}"
 
+    def resize(self, new_resolution):
+        self.resolution = new_resolution
+        self.params['Cubemap_texture'] = nn.functional.interpolate(self.params['Cubemap_texture'], size=(new_resolution, new_resolution), mode='bicubic', align_corners=True)
+        self.n_elems = 6 * self.output_dim * self.resolution * self.resolution + self.output_dim
+
     # inputs: lista de vetores de reflexão de cada pixel (ver gaussian_renderer)
     def forward(self, inputs):
         outputs = cubemap_encode(inputs, self.params['Cubemap_texture'], self.params['Cubemap_failv'], self.interp_id, self.seamless)

@@ -56,6 +56,7 @@ class ModelParams(ParamGroup):
         self._images = "images"
         self._resolution = -1
         self._white_background = False
+        self.cubemap_resol = 128
         self.data_device = "cuda"
         self.eval = False
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Surface Depth', 'Depth', 'Edge', 'Curvature'] # TODO
@@ -100,7 +101,7 @@ class OptimizationParams(ParamGroup):
         
         self.refl_lr = 0.006 # TODO
         self.envmap_cubemap_lr = 0.05 # TODO
-        self.refl_init_value = 1e-3 # TODO
+        self.refl_init_value = 1e-1 # TODO
         self.lambda_refl_smooth = 0.4 # TODO
         self.init_until_iter = 500 # TODO
         self.feature_rest_from_iter = 7_000 # TODO

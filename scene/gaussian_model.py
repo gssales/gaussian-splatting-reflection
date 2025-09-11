@@ -46,7 +46,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int, init_refl_value=1e-3):
+    def __init__(self, sh_degree : int, init_refl_value=1e-3, init_cubemap_resol = 128):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -65,6 +65,7 @@ class GaussianModel:
         self._refl_strength = torch.empty(0)
         self.init_refl_value = init_refl_value
         self.env_map = None
+        self.env_map_resol = init_cubemap_resol
 
         self.setup_functions()
 
@@ -83,6 +84,7 @@ class GaussianModel:
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
+            self.env_map_resol
         )
     
     def restore(self, model_args, training_args):
@@ -98,7 +100,8 @@ class GaussianModel:
         xyz_gradient_accum, 
         denom,
         opt_dict, 
-        self.spatial_lr_scale) = model_args
+        self.spatial_lr_scale,
+        self.env_map_resol) = model_args
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
@@ -146,7 +149,7 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, init_refl_value = 1e-3, cubemap_resol = 128):
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, init_refl_value = 1e-3):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
@@ -172,7 +175,7 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._refl_strength = nn.Parameter(refl_strengths.requires_grad_(True))
 
-        env_map = CubemapEncoder(output_dim=3, resolution=cubemap_resol)
+        env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol)
         self.env_map = env_map.cuda()
 
     def training_setup(self, training_args):
@@ -313,7 +316,7 @@ class GaussianModel:
 
         map_path = path.replace('.ply', '.map')
         if os.path.exists(map_path):
-            self.env_map = CubemapEncoder(output_dim=3, resolution=128).cuda()
+            self.env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol).cuda()
             self.env_map.load_state_dict(torch.load(map_path))
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -325,6 +328,20 @@ class GaussianModel:
         self._refl_strength = nn.Parameter(torch.tensor(refls, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+
+    def double_env_map(self):
+        self.env_map_resol = self.env_map_resol*2
+        self.env_map.resize(self.env_map_resol)
+        for group in self.optimizer.param_groups:
+            if group["name"] == "env":
+                stored_state1 = self.optimizer.state.get(group['params'][1], None)
+                print(stored_state1)
+                stored_state1["exp_avg"] = torch.zeros_like(self.env_map.params["Cubemap_texture"])
+                stored_state1["exp_avg_sq"] = torch.zeros_like(self.env_map.params["Cubemap_texture"])
+
+                del self.optimizer.state[group['params'][1]]
+                group["params"][1] = self.env_map.params["Cubemap_texture"]
+                self.optimizer.state[group['params'][1]] = stored_state1
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}

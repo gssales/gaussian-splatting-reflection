@@ -1,8 +1,10 @@
+ffmpeg==4.2.2
 imageio==2.31.2
 imageio-ffmpeg==0.4.7
 kornia==0.6.0
 lpips==0.1.4
 matplotlib==3.5.3
+mediapy==1.1.2
 ninja==1.11.1.1
 numpy==1.21.6
 open3d==0.17.0

@@ -23,6 +23,7 @@ from utils.image_utils import psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import traceback
+import torchvision
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -46,6 +47,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     densify_until_iteration = opt.densify_until_iter + opt.longer_prop_iter
     if opt.normal_propagation:
         normal_prop_until_iter = opt.normal_prop_until_iter + opt.longer_prop_iter
+    if opt.color_sabotage:
+        color_sabotage_until_iter = opt.color_sabotage_until_iter + opt.longer_prop_iter
     
     if opt.use_env_scope:
         center = [float(c) for c in opt.env_scope_center]
@@ -53,7 +56,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         env_scope_radius = opt.env_scope_radius
         refl_mask_loss_weight = 0.4
 
-    gaussians = GaussianModel(dataset.sh_degree, opt.refl_init_value)
+    gaussians = GaussianModel(dataset.sh_degree, opt.refl_init_value, dataset.cubemap_resol)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -124,8 +127,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             rend_normal  = render_pkg['rend_normal']
             surf_normal = render_pkg['surf_normal']
             normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
-            if opt.use_env_scope:
-                normal_error = normal_error * env_scope_mask
+            # if opt.use_env_scope:
+            #     normal_error = normal_error * env_scope_mask
             normal_loss = lambda_normal * (normal_error).mean()
             loss += normal_loss
             normal_loss = normal_loss.item()
@@ -135,8 +138,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         if not opt.disable_depth_distortion_loss:
             lambda_dist = opt.lambda_dist if iteration > opt.init_until_iter else 0.0
             rend_dist = render_pkg["rend_dist"]
-            if opt.use_env_scope:
-                rend_dist = rend_dist * env_scope_mask
+            # if opt.use_env_scope:
+            #     rend_dist = rend_dist * env_scope_mask
             dist_loss = lambda_dist * (rend_dist).mean()
             loss += dist_loss
             dist_loss = dist_loss.item()
@@ -193,7 +196,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if opt.normal_propagation and iteration <= normal_prop_until_iter:
+                if opt.normal_propagation and (opt.init_until_iter < iteration <= normal_prop_until_iter):
                     densification_interval = opt.densification_interval_when_prop
                 else:
                     densification_interval = opt.densification_interval
@@ -229,6 +232,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                         if opt.opac_lr0_interval > 0 and iteration != opt.normal_prop_until_iter:
                             gaussians.set_opacity_lr(0.0)
 
+                if (iteration-500) % opt.color_sabotage_interval == 0 and (opt.init_until_iter < iteration <= color_sabotage_until_iter):
                     if opt.color_sabotage:
                         refl = gaussians.get_refl
                         color_mask = (refl > 0.1).flatten()                        
@@ -236,6 +240,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                         if outside_msk is not None:
                             color_mask = torch.logical_or(color_mask, outside_msk)
                         gaussians.dist_color(exclusive_msk=color_mask)
+
+            if iteration % 10000 == 0 and (20000 < iteration <= 90000):
+                torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][0]), os.path.join(dataset.model_path, 'cubemap0_{}.png'.format(iteration)))
+                gaussians.double_env_map()
                     
 
             # Optimizer step
