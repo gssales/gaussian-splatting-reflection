@@ -241,8 +241,12 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                             color_mask = torch.logical_or(color_mask, outside_msk)
                         gaussians.dist_color(exclusive_msk=color_mask)
 
-            if iteration % 10000 == 0 and (20000 < iteration <= 90000):
-                torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][0]), os.path.join(dataset.model_path, 'cubemap0_{}.png'.format(iteration)))
+            if iteration % 10000 == 0:
+                os.makedirs(os.path.join(dataset.model_path, '/cubemap'), exist_ok = True)
+                for i in range(6):
+                    torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, '/cubemap/{}_{}.png'.format(i, iteration)))
+
+            if iteration == 30000 and iteration == 45000:
                 gaussians.double_env_map()
                     
 
