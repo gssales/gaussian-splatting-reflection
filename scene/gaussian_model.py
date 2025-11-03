@@ -155,7 +155,7 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, init_refl_value = 1e-3):
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, init_refl_value = 1e-3, init_opacity_value = 0.1):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
@@ -169,7 +169,7 @@ class GaussianModel:
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 2)
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
-        opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+        opacities = self.inverse_opacity_activation(init_opacity_value * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         refl_strengths = self.inverse_refl_activation(torch.ones_like(opacities).cuda() * init_refl_value)
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))

@@ -12,17 +12,39 @@
 import os
 import random
 import json
+
+import numpy as np
+from utils.graphics_utils import BasicPointCloud
+from utils.sh_utils import SH2RGB
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 
+class StageScene:
+
+    gaussians : GaussianModel
+
+    def __init__(self, args: ModelParams, gaussians : GaussianModel):
+        self.gaussians = gaussians
+        self.cameras = {}
+
+        num_pts = 5
+        print(f"Generating random point cloud ({num_pts})...")
+        
+        # We create random points inside the bounds of the synthetic Blender scenes
+        xyz = np.random.random((num_pts, 3)) * 1.0 - 0.5
+        shs = np.random.random((num_pts, 3)) # / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+        self.gaussians.create_from_pcd(pcd, 10, init_opacity_value=1.0)
+
 class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args: ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
