@@ -21,6 +21,12 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 from cubemapencoder import CubemapEncoder
+from PIL import Image
+from utils.general_utils import PILtoTorch
+from kornia.filters import UnsharpMask
+import torchvision
+from torchvision.transforms import functional as F
+
 
 class GaussianModel:
 
@@ -199,10 +205,22 @@ class GaussianModel:
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
+        self.rotation_scheduler_args = get_expon_lr_func(lr_init=training_args.rotation_lr_init,
+                                                    lr_final=training_args.rotation_lr_final,
+                                                    lr_delay_mult=training_args.rotation_lr_delay_mult,
+                                                    max_steps=training_args.rotation_lr_max_steps)
+
+    def freeze_xyz(self):
+        self._xyz.requires_grad = False
+        self._rotation.requires_grad = False
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         for param_group in self.optimizer.param_groups:
+            # if param_group["name"] == "rotation":
+            #     lr = self.rotation_scheduler_args(iteration)
+            #     param_group['lr'] = lr
+            #     return lr
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
@@ -316,8 +334,37 @@ class GaussianModel:
 
         map_path = path.replace('.ply', '.map')
         if os.path.exists(map_path):
+            data = torch.load(map_path)
+            self.env_map_resol = data["params.Cubemap_texture"].shape[2]
             self.env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol).cuda()
-            self.env_map.load_state_dict(torch.load(map_path))
+            self.env_map.load_state_dict(data)
+
+        # cubemap_textures_names = ["px", "nx", "ny", "py", "pz", "nz",]
+        # cubemap_textures = []
+        # for name in cubemap_textures_names:
+        #     image = Image.open(path.replace('point_cloud.ply', name + ".png"))
+        #     texture = PILtoTorch(image, image.size)[0:3]
+        #     texture = inverse_sigmoid(texture)
+        #     cubemap_textures.append(F.adjust_sharpness(texture, 2.0))
+
+        # cubemap_textures = torch.stack(cubemap_textures).cuda()
+        # cubemap_textures = torch.clamp(cubemap_textures, min=1e-3, max=1-1e-3)
+        
+        # print(cubemap_textures.shape)
+        
+        # for i in range(6):
+        #     torchvision.utils.save_image(cubemap_textures[i], path.replace('point_cloud.ply', cubemap_textures_names[i] + "_sharp.png"))
+
+        # self.env_map.set_textures(cubemap_textures)
+#===
+        # textures = self.env_map.params['Cubemap_texture']
+        # sharpen = UnsharpMask((5,5), (1.5,1.5))
+        # for i in range(6):
+        #     textures[i] = sharpen(textures[i].unsqueeze(0))
+
+        # self.env_map.set_textures(textures)
+
+        # self.env_map.filter_textures((5,5), (1.5,1.5))
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -332,10 +379,16 @@ class GaussianModel:
     def double_env_map(self):
         self.env_map_resol = self.env_map_resol*2
         self.env_map.resize(self.env_map_resol)
+        self.replace_env_map()
+
+    def filter_env_map(self):
+        self.env_map.filter(torch.sigmoid, inverse_sigmoid)
+        self.replace_env_map()
+
+    def replace_env_map(self):
         for group in self.optimizer.param_groups:
             if group["name"] == "env":
                 stored_state1 = self.optimizer.state.get(group['params'][1], None)
-                print(stored_state1)
                 stored_state1["exp_avg"] = torch.zeros_like(self.env_map.params["Cubemap_texture"])
                 stored_state1["exp_avg_sq"] = torch.zeros_like(self.env_map.params["Cubemap_texture"])
 
@@ -501,3 +554,46 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+
+def rgb2hsl_torch(rgb: torch.Tensor) -> torch.Tensor:
+    cmax, cmax_idx = torch.max(rgb, dim=1, keepdim=True)
+    cmin = torch.min(rgb, dim=1, keepdim=True)[0]
+    delta = cmax - cmin
+    hsl_h = torch.empty_like(rgb[:, 0:1, :, :])
+    cmax_idx[delta == 0] = 3
+    hsl_h[cmax_idx == 0] = (((rgb[:, 1:2] - rgb[:, 2:3]) / delta) % 6)[cmax_idx == 0]
+    hsl_h[cmax_idx == 1] = (((rgb[:, 2:3] - rgb[:, 0:1]) / delta) + 2)[cmax_idx == 1]
+    hsl_h[cmax_idx == 2] = (((rgb[:, 0:1] - rgb[:, 1:2]) / delta) + 4)[cmax_idx == 2]
+    hsl_h[cmax_idx == 3] = 0.
+    hsl_h /= 6.
+
+    hsl_l = (cmax + cmin) / 2.
+    hsl_s = torch.empty_like(hsl_h)
+    hsl_s[hsl_l == 0] = 0
+    hsl_s[hsl_l == 1] = 0
+    hsl_l_ma = torch.bitwise_and(hsl_l > 0, hsl_l < 1)
+    hsl_l_s0_5 = torch.bitwise_and(hsl_l_ma, hsl_l <= 0.5)
+    hsl_l_l0_5 = torch.bitwise_and(hsl_l_ma, hsl_l > 0.5)
+    hsl_s[hsl_l_s0_5] = ((cmax - cmin) / (hsl_l * 2.))[hsl_l_s0_5]
+    hsl_s[hsl_l_l0_5] = ((cmax - cmin) / (- hsl_l * 2. + 2.))[hsl_l_l0_5]
+    return torch.cat([hsl_h, hsl_s, hsl_l], dim=1)
+
+
+def hsl2rgb_torch(hsl: torch.Tensor) -> torch.Tensor:
+    hsl_h, hsl_s, hsl_l = hsl[:, 0:1], hsl[:, 1:2], hsl[:, 2:3]
+    _c = (-torch.abs(hsl_l * 2. - 1.) + 1) * hsl_s
+    _x = _c * (-torch.abs(hsl_h * 6. % 2. - 1) + 1.)
+    _m = hsl_l - _c / 2.
+    idx = (hsl_h * 6.).type(torch.uint8)
+    idx = (idx % 6).expand(-1, 3, -1, -1)
+    rgb = torch.empty_like(hsl)
+    _o = torch.zeros_like(_c)
+    rgb[idx == 0] = torch.cat([_c, _x, _o], dim=1)[idx == 0]
+    rgb[idx == 1] = torch.cat([_x, _c, _o], dim=1)[idx == 1]
+    rgb[idx == 2] = torch.cat([_o, _c, _x], dim=1)[idx == 2]
+    rgb[idx == 3] = torch.cat([_o, _x, _c], dim=1)[idx == 3]
+    rgb[idx == 4] = torch.cat([_x, _o, _c], dim=1)[idx == 4]
+    rgb[idx == 5] = torch.cat([_c, _o, _x], dim=1)[idx == 5]
+    rgb += _m
+    return rgb

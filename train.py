@@ -123,12 +123,12 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
          # regularization
         if not opt.disable_normal_consistentcy_loss:
-            lambda_normal = opt.lambda_normal if iteration > opt.init_until_iter else 0.0
+            lambda_normal = opt.lambda_normal if opt.init_until_iter < iteration <= densify_until_iteration else 0.0
             rend_normal  = render_pkg['rend_normal']
             surf_normal = render_pkg['surf_normal']
             normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
-            # if opt.use_env_scope:
-            #     normal_error = normal_error * env_scope_mask
+            if opt.use_env_scope:
+                normal_error = normal_error * env_scope_mask
             normal_loss = lambda_normal * (normal_error).mean()
             loss += normal_loss
             normal_loss = normal_loss.item()
@@ -136,10 +136,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             normal_loss = 0
 
         if not opt.disable_depth_distortion_loss:
-            lambda_dist = opt.lambda_dist if iteration > opt.init_until_iter else 0.0
+            lambda_dist = opt.lambda_dist if opt.init_until_iter < iteration <= densify_until_iteration else 0.0
             rend_dist = render_pkg["rend_dist"]
-            # if opt.use_env_scope:
-            #     rend_dist = rend_dist * env_scope_mask
+            if opt.use_env_scope:
+                rend_dist = rend_dist * env_scope_mask
             dist_loss = lambda_dist * (rend_dist).mean()
             loss += dist_loss
             dist_loss = dist_loss.item()
@@ -186,6 +186,21 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'total_loss': loss.item()
             }
             training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+
+            if iteration % 10000 == 0:
+                os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
+                for i in range(6):
+                    torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, 'cubemap/{}_{}.png'.format(i, iteration)))
+
+            if iteration == densify_until_iteration or iteration == 45000:
+                gaussians.double_env_map()
+
+            if iteration > densify_until_iteration*2:
+                gaussians.freeze_xyz()
+
+            # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
+            #     gaussians.filter_env_map()
+
             if (iteration in saving_iterations or iteration == total_iterations-1):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -240,15 +255,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                         if outside_msk is not None:
                             color_mask = torch.logical_or(color_mask, outside_msk)
                         gaussians.dist_color(exclusive_msk=color_mask)
-
-            if iteration % 10000 == 0:
-                os.makedirs(os.path.join(dataset.model_path, '/cubemap'), exist_ok = True)
-                for i in range(6):
-                    torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, '/cubemap/{}_{}.png'.format(i, iteration)))
-
-            if iteration == 30000 and iteration == 45000:
-                gaussians.double_env_map()
-                    
 
             # Optimizer step
             if iteration < total_iterations-1:

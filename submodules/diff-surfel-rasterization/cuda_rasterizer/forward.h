@@ -68,7 +68,8 @@ namespace FORWARD
 		const float* bg_color,
 		float* out_color,
 		float* out_others,
-		float* out_refl_strength_map);
+		float* out_refl_strength_map,
+		int* is_rendered);
 }
 
 

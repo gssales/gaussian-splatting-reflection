@@ -221,6 +221,7 @@ int CudaRasterizer::Rasterizer::forward(
 	float* out_others,
 	float* out_refl_strength_map,
 	int* radii,
+	int* is_rendered,
 	bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
@@ -326,7 +327,9 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* transMat_ptr = transMat_precomp != nullptr ? transMat_precomp : geomState.transMat;
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
+		// cada range tem um x e y, que são o indice de inicio de fim do tile
 		imgState.ranges,
+		// lista de pontos ordenados por tile e profundidade, com duplicatas para os tiles
 		binningState.point_list,
 		width, height,
 		focal_x, focal_y,
@@ -342,7 +345,8 @@ int CudaRasterizer::Rasterizer::forward(
 		background,
 		out_color,
 		out_others,
-		out_refl_strength_map), debug)
+		out_refl_strength_map,
+		is_rendered), debug)
 
 	return num_rendered;
 }

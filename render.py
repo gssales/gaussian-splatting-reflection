@@ -22,8 +22,10 @@ from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 
+G = {}
+G["visible_gaussians"] = torch.empty(0)
 
-def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pipeline, background, render_normals):
+def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pipeline, background, render_normals, count_visible = True):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
 
@@ -40,27 +42,36 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pip
         torchvision.utils.save_image(ltres['env_cood1'], os.path.join(model_path, 'light1_{}.png'.format(iteration)))
         torchvision.utils.save_image(ltres['env_cood2'], os.path.join(model_path, 'light2_{}.png'.format(iteration)))
 
+    visible_gaussians_ = torch.zeros_like(gaussians.get_opacity)
+
     render_times = []
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         t1 = time.time()
         render_pkg = render(view, gaussians, pipeline, background)
         render_time = time.time() - t1
         render_times.append(render_time)
-        rendering = render_pkg["render"]
+        rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         gt = view.original_image[0:3, :, :]
+
+        mask = render_pkg["is_rendered"] == 1
+        visible_gaussians_[mask] = 1
 
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
         if render_normals:
-            normals = render_pkg["rend_normal"]
+            normals = torch.clamp(render_pkg["rend_normal"], 0.0, 1.0)
             normals = normals*0.5+0.5
             torchvision.utils.save_image(normals, os.path.join(normals_path, '{0:05d}'.format(idx) + ".png"))
 
-    with open(model_path + "/fps.txt", 'w') as fp:
-        fps = 1.0/np.array(render_times).mean()
-        fp.write('fps:{}\n'.format(fps))
-        fp.write('count:{}'.format(len(gaussians.get_xyz)))
+    if count_visible:
+        G["visible_gaussians"] = visible_gaussians_
+
+        with open(model_path + "/fps.txt", 'w') as fp:
+            fps = 1.0/np.array(render_times).mean()
+            fp.write('fps:{}\n'.format(fps))
+            fp.write('count:{}\n'.format(len(gaussians.get_xyz)))
+            fp.write('visible_gaussians:{}/{}'.format(torch.sum(G["visible_gaussians"]), len(G["visible_gaussians"])))
 
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, render_normals : bool):
@@ -76,6 +87,16 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         if not skip_test:
              render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, render_normals)
+             
+        if skip_test and skip_train:
+            render_set(dataset.model_path, "all", scene.loaded_iter, scene.getTestCameras() + scene.getTrainCameras(), gaussians, pipeline, background, render_normals)
+
+            mask = G["visible_gaussians"] == 1
+            print(G["visible_gaussians"].shape, torch.sum(G["visible_gaussians"]))
+            gaussians._opacity[mask] = -10
+            gaussians._opacity[not mask] = 10
+
+            render_set(dataset.model_path, "hidden", scene.loaded_iter, scene.getTestCameras() + scene.getTrainCameras(), gaussians, pipeline, background, render_normals, count_visible=False)
 
 if __name__ == "__main__":
     # Set up command line argument parser

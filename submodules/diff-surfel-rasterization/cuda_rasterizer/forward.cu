@@ -172,6 +172,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
+	// idx é o indice da gaussiana
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P)
 		return;
@@ -206,6 +207,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		normal = make_float3(0.0, 0.0, 1.0);
 	}
 
+	// inverte o vertor normal da gaussiana para apontar para a câmera
 #if DUAL_VISIABLE
 	float cos = -sumf3(p_view * normal);
 	if (cos == 0) return;
@@ -272,7 +274,8 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	float* __restrict__ out_others,
-	float* __restrict__ out_refl_strength_map)
+	float* __restrict__ out_refl_strength_map,
+	int* __restrict__ is_rendered)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -432,6 +435,9 @@ renderCUDA(
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
+
+			// mark Gaussians that contribute to image
+			atomicExch(&is_rendered[collected_id[j]], 1);
 		}
 	}
 
@@ -478,7 +484,8 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color,
 	float* out_others,
-	float* out_refl_strength_map)
+	float* out_refl_strength_map,
+	int* is_rendered)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -497,7 +504,8 @@ void FORWARD::render(
 		bg_color,
 		out_color,
 		out_others,
-		out_refl_strength_map);
+		out_refl_strength_map,
+		is_rendered);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

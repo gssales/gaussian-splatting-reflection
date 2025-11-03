@@ -127,7 +127,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         
     refl_strengths = pc.get_refl
 
-    base_color, radii, allmap, refl_strength_map = rasterizer(
+    base_color, radii, allmap, refl_strength_map, is_rendered = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -179,7 +179,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     surf_normal = surf_normal * (render_alpha).detach()
 
     if initial_stage:
-        base_color = base_color.clamp(0,1)
+        # base_color = base_color.clamp(0,1)
         out =  {
             "render": base_color,
             "viewspace_points": means2D,
@@ -198,7 +198,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, n_map)
 
         final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
-        final_image = final_image.clamp(0, 1)
+        # final_image = final_image.clamp(0, 1)
 
         out = {
             "render": final_image,
@@ -213,7 +213,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             'env_scope_mask': mask,
             "refl_strength_map": refl_strength_map,
             "refl_color_map": refl_color,
-            "base_color_map": base_color
+            "base_color_map": base_color,
+            "is_rendered": is_rendered
         }
 
     return out

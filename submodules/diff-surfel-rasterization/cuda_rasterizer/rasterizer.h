@@ -54,6 +54,7 @@ namespace CudaRasterizer
 			float* out_others,
 			float* out_refl_strength_map,
 			int* radii = nullptr,
+			int* is_rendered = nullptr,
 			bool debug = false);
 
 		static void backward(
