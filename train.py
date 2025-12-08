@@ -187,7 +187,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'normal_loss': normal_loss,
                 'total_loss': loss.item()
             }
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.model_path)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
@@ -315,9 +315,16 @@ def prepare_output_and_logger(args):
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
+import os
+from typing import Optional
+
+import torch
+from torchvision.utils import make_grid, save_image
 
 @torch.no_grad()
-def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs,
+    model_path,  # <-- NEW: to get dataset.model_path
+):
     if tb_writer:
         for tag,loss in train_loss_report.items():
             tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
@@ -330,51 +337,234 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
+        from utils.general_utils import colormap  # used repeatedly
+
+        from utils.general_utils import colormap  # already used
+
+        def to_3ch(t: torch.Tensor) -> torch.Tensor:
+            """
+            Normalize various image-like tensor shapes to (B, 3, H, W) on CPU.
+            Accepted inputs:
+            (H, W)
+            (C, H, W)
+            (H, W, C)
+            (B, C, H, W)
+            (B, H, W, C)
+            (1, H, W)
+            """
+            if t is None:
+                return None
+
+            t = t.detach().cpu()
+
+            if t.dim() == 2:
+                # (H, W)
+                t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
+
+            elif t.dim() == 3:
+                # Could be (C,H,W) or (H,W,C)
+                if t.shape[0] in (1, 3):
+                    # (C,H,W)
+                    t = t.unsqueeze(0)  # (1,C,H,W)
+                elif t.shape[2] in (1, 3):
+                    # (H,W,C)
+                    t = t.permute(2, 0, 1).unsqueeze(0)  # (1,C,H,W)
+                else:
+                    # Ambiguous, treat as single-channel
+                    t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
+
+            elif t.dim() == 4:
+                # Could be (B,C,H,W) or (B,H,W,C)
+                if t.shape[1] in (1, 3):
+                    # already (B,C,H,W)
+                    pass
+                elif t.shape[-1] in (1, 3):
+                    # (B,H,W,C)
+                    t = t.permute(0, 3, 1, 2)  # (B,C,H,W)
+                else:
+                    # Ambiguous, assume second dim is channel
+                    # but keep shape, we'll just repeat later if needed
+                    pass
+            else:
+                raise ValueError(f"Unsupported tensor dim {t.dim()} for image-like data")
+
+            # Ensure 3 channels
+            if t.shape[1] == 1:
+                t = t.repeat(1, 3, 1, 1)
+            elif t.shape[1] != 3:
+                # In weird cases, just squeeze to one channel and repeat
+                t = t.mean(dim=1, keepdim=True)  # (B,1,H,W)
+                t = t.repeat(1, 3, 1, 1)
+
+            return t
+
+
         for config in validation_configs:
+            config_name = config['name']
             if config['cameras'] and len(config['cameras']) > 0:
+
+                # base folder: dataset.model_path/progress/{train|test}
+                base_save_dir = os.path.join(model_path, 'progress', config_name)
+                os.makedirs(base_save_dir, exist_ok=True)
+
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
                     render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=False, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+
+                    # ---- TensorBoard logging (unchanged, except minor refactor) ----
                     if tb_writer and (idx < 5):
-                        from utils.general_utils import colormap
                         depth = render_pkg["surf_depth"]
                         norm = depth.max()
                         depth = depth / norm
-                        depth = colormap(depth.cpu().numpy()[0], cmap='turbo')
-                        tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth[None], global_step=iteration)
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        depth = colormap(depth.detach().cpu().numpy()[0], cmap='turbo')
+
+                        tb_writer.add_images(
+                            f"{config_name}_view_{viewpoint.image_name}/depth",
+                            depth[None],
+                            global_step=iteration,
+                        )
+                        tb_writer.add_images(
+                            f"{config_name}_view_{viewpoint.image_name}/render",
+                            image[None],
+                            global_step=iteration,
+                        )
 
                         try:
                             refl_map = render_pkg['refl_strength_map']
                             rend_alpha = render_pkg['rend_alpha']
                             rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
                             surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
-                            tb_writer.add_images(config['name'] + "_view_{}/rend_normal".format(viewpoint.image_name), rend_normal[None], global_step=iteration)
-                            tb_writer.add_images(config['name'] + "_view_{}/surf_normal".format(viewpoint.image_name), surf_normal[None], global_step=iteration)
-                            tb_writer.add_images(config['name'] + "_view_{}/rend_alpha".format(viewpoint.image_name), rend_alpha[None], global_step=iteration)
-                            tb_writer.add_images(config['name'] + "_view_{}/refl_map".format(viewpoint.image_name), refl_map[None], global_step=iteration)
+
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/rend_normal",
+                                rend_normal[None],
+                                global_step=iteration,
+                            )
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/surf_normal",
+                                surf_normal[None],
+                                global_step=iteration,
+                            )
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/rend_alpha",
+                                rend_alpha[None],
+                                global_step=iteration,
+                            )
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/refl_map",
+                                refl_map[None],
+                                global_step=iteration,
+                            )
 
                             rend_dist = render_pkg["rend_dist"]
                             rend_dist = colormap(rend_dist.cpu().numpy()[0])
-                            tb_writer.add_images(config['name'] + "_view_{}/rend_dist".format(viewpoint.image_name), rend_dist[None], global_step=iteration)
-                        except:
+                            rend_dist_color_t = (
+                                rend_dist.permute(2, 0, 1)
+                                .unsqueeze(0)
+                                .float()
+                            )
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/rend_dist",
+                                rend_dist[None],
+                                global_step=iteration,
+                            )
+                        except Exception:
                             pass
 
                         if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/ground_truth",
+                                gt_image[None],
+                                global_step=iteration,
+                            )
 
+                    # ---- Metrics ----
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
 
-                psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
-                if tb_writer:
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    # ---- Save grid per camera (by attributes) ----
+                    if base_save_dir is not None:
+                        tiles = []
+
+                        # 1) Render (B,C,H,W)
+                        tiles.append(to_3ch(image))
+
+                        # 2) Ground truth (B,C,H,W)
+                        tiles.append(to_3ch(gt_image))
+
+                        # 3) Depth (colored)
+                        try:
+                            depth = render_pkg["surf_depth"]          # possible shapes: (1,1,H,W) or (1,H,W)
+                            norm = depth.max().clamp(min=1e-8)
+                            depth_norm = depth / norm                 # same shape as depth
+
+                            # Convert to (H,W) for colormap
+                            depth_np = depth_norm.squeeze().cpu().numpy()  # (H,W)
+                            depth_color = colormap(depth_np, cmap='turbo') # (H,W,3)
+                            depth_t = torch.from_numpy(depth_color).float()  # (H,W,3)
+                            tiles.append(to_3ch(depth_t))
+                        except Exception:
+                            pass
+
+                        # 4) Other attributes if present
+                        try:
+                            if "rend_normal" in render_pkg:
+                                rn = render_pkg["rend_normal"] * 0.5 + 0.5   # usually (1,3,H,W)
+                                tiles.append(to_3ch(rn))
+
+                            if "surf_normal" in render_pkg:
+                                sn = render_pkg["surf_normal"] * 0.5 + 0.5
+                                tiles.append(to_3ch(sn))
+
+                            if "rend_alpha" in render_pkg:
+                                ra = render_pkg["rend_alpha"]                # maybe (1,1,H,W) or (1,H,W)
+                                tiles.append(to_3ch(ra))
+
+                            if "refl_strength_map" in render_pkg:
+                                rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
+                                tiles.append(to_3ch(rm))
+
+                            if "rend_dist" in render_pkg:
+                                rd = render_pkg["rend_dist"]                 # (1,1,H,W) or (1,H,W)
+                                rd_np = rd.squeeze().cpu().numpy()           # (H,W)
+                                rd_color = colormap(rd_np)                   # (H,W,3)
+                                rd_t = torch.from_numpy(rd_color).float()    # (H,W,3)
+                                tiles.append(to_3ch(rd_t))
+                        except Exception:
+                            pass
+
+                        tiles = [t for t in tiles if t is not None]
+                        if len(tiles) > 0:
+                            cat = torch.cat(tiles, dim=0)  # (N,3,H,W) – now safe
+                            grid = make_grid(
+                                cat,
+                                nrow=3,  # all attributes in one row for this camera
+                                padding=2,
+                            )
+
+                            img_name = f"{config_name}_{idx:03d}_{iteration}.png"
+                            save_path = os.path.join(base_save_dir, img_name)
+                            save_image(grid, save_path)
+
+
+            # ---- Average metrics per config ----
+            psnr_test /= len(config['cameras'])
+            l1_test /= len(config['cameras'])
+            print(f"\n[ITER {iteration}] Evaluating {config_name}: L1 {l1_test} PSNR {psnr_test}")
+            if tb_writer:
+                tb_writer.add_scalar(
+                    f"{config_name}/loss_viewpoint - l1_loss",
+                    l1_test,
+                    iteration,
+                )
+                tb_writer.add_scalar(
+                    f"{config_name}/loss_viewpoint - psnr",
+                    psnr_test,
+                    iteration,
+                )
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
