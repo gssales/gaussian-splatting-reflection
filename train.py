@@ -105,12 +105,23 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+        gt_alpha_mask = viewpoint_cam.gt_alpha_mask
+
+        if gt_alpha_mask is not None:
+            gt_alpha_mask = gt_alpha_mask.cuda()
+            gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
+
+        image = image * alpha + (1-alpha) * background[:, None, None]
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
         else:
             ssim_value = ssim(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+        
+        # in synthetic scenes, forces gaussian of the same color as the background to be transparent
+        if gt_alpha_mask is not None:
+            loss += l1_loss(alpha, gt_alpha_mask)
 
         def get_outside_msk():
             return None if not opt.use_env_scope else \
@@ -146,15 +157,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         else:
             dist_loss = 0
 
-        # in synthetic scenes, forces gaussian of the same color as the background to be transparent
-        if opt.synthetic:
-            if dataset.white_background:
-                msk = (image > 0.99).all(dim=0)
-            else:
-                msk = (image < 0.01).all(dim=0)
-            alpha_error = torch.zeros_like(alpha, dtype=alpha.dtype, device=alpha.device)
-            alpha_error[:,msk] = alpha[:,msk]
-            loss += 0.1 * alpha_error.mean()
 
         loss.backward()
 

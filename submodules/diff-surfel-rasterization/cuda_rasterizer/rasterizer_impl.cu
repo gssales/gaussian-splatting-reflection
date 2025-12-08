@@ -207,6 +207,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* shs,
 	const float* colors_precomp,
 	const float* refl_strengths,
+	const float* img_mask,
 	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
@@ -222,7 +223,9 @@ int CudaRasterizer::Rasterizer::forward(
 	float* out_refl_strength_map,
 	int* radii,
 	int* is_rendered,
-	bool debug)
+	bool debug,
+	bool apply_mask,
+	bool slice)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -333,10 +336,15 @@ int CudaRasterizer::Rasterizer::forward(
 		binningState.point_list,
 		width, height,
 		focal_x, focal_y,
+		scale_modifier,
+		apply_mask,
+		slice,
+		means3D,
 		geomState.means2D,
 		env_scope_mask,
 		feature_ptr,
 		refl_strengths,
+		img_mask,
 		transMat_ptr,
 		geomState.depths,
 		geomState.normal_opacity,

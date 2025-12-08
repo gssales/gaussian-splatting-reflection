@@ -30,6 +30,7 @@ def rasterize_gaussians(
     cov3Ds_precomp,
     raster_settings,
     env_scope_mask,
+    img_mask,
 ):
     return _RasterizeGaussians.apply(
         means3D,
@@ -43,6 +44,7 @@ def rasterize_gaussians(
         cov3Ds_precomp,
         raster_settings,
         env_scope_mask,
+        img_mask,
     )
 
 class _RasterizeGaussians(torch.autograd.Function):
@@ -60,6 +62,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         cov3Ds_precomp,
         raster_settings,
         env_scope_mask,
+        img_mask,
     ):
 
         # Restructure arguments the way that the C++ lib expects them
@@ -69,6 +72,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             env_scope_mask,
             colors_precomp,
             refl_strengths,
+            img_mask,
             opacities,
             scales,
             rotations,
@@ -84,7 +88,9 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.sh_degree,
             raster_settings.campos,
             raster_settings.prefiltered,
-            raster_settings.debug
+            raster_settings.debug,
+            raster_settings.apply_mask,
+            raster_settings.slice
         )
 
         # Invoke C++/CUDA rasterizer
@@ -163,6 +169,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_cov3Ds_precomp,
             None,
             None,
+            None,
         )
 
         return grads
@@ -180,6 +187,8 @@ class GaussianRasterizationSettings(NamedTuple):
     campos : torch.Tensor
     prefiltered : bool
     debug : bool
+    apply_mask : bool
+    slice : bool
 
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):
@@ -197,7 +206,7 @@ class GaussianRasterizer(nn.Module):
             
         return visible
 
-    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, refl_strengths = None, scales = None, rotations = None, cov3D_precomp = None, env_scope_mask = None):
+    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, refl_strengths = None, scales = None, rotations = None, cov3D_precomp = None, env_scope_mask = None, img_mask = None):
         
         raster_settings = self.raster_settings
 
@@ -221,6 +230,9 @@ class GaussianRasterizer(nn.Module):
             
         if env_scope_mask is None:
             env_scope_mask = torch.Tensor([]).cuda()
+
+        if img_mask is None:
+            img_mask = torch.Tensor([]).cuda()
         
 
         # Invoke C++/CUDA rasterization routine
@@ -236,5 +248,6 @@ class GaussianRasterizer(nn.Module):
             cov3D_precomp,
             raster_settings,
             env_scope_mask,
+            img_mask,
         )
 

@@ -262,10 +262,15 @@ renderCUDA(
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	float focal_x, float focal_y,
+	const float max_dist_debug,
+	const bool apply_mask,
+	const bool slice,
+	const float* orig_points,
 	const float2* __restrict__ points_xy_image,
 	const bool* __restrict__ env_scope_mask,
 	const float* __restrict__ features,
 	const float* __restrict__ refl_stengths,
+	const float* __restrict__ img_mask,
 	const float* __restrict__ transMats,
 	const float* __restrict__ depths,
 	const float4* __restrict__ normal_opacity,
@@ -387,6 +392,14 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
+			// ================
+
+			float3 point = ((float3*)orig_points)[collected_id[j]];
+			if (slice && (point.x >= max_dist_debug || point.x <= -max_dist_debug))
+				continue;
+
+			// ================
+
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
@@ -437,7 +450,8 @@ renderCUDA(
 			last_contributor = contributor;
 
 			// mark Gaussians that contribute to image
-			atomicExch(&is_rendered[collected_id[j]], 1);
+			if (!apply_mask || img_mask[H * W + pix_id] == 1.0)
+				atomicExch(&is_rendered[collected_id[j]], 1);
 		}
 	}
 
@@ -472,10 +486,15 @@ void FORWARD::render(
 	const uint32_t* point_list,
 	int W, int H,
 	float focal_x, float focal_y,
+	const float max_dist_debug,
+	const bool apply_mask,
+	const bool slice,
+	const float* orig_points,
 	const float2* means2D,
 	const bool* env_scope_mask,
 	const float* colors,
 	const float* refl_strengths,
+	const float* img_mask,
 	const float* transMats,
 	const float* depths,
 	const float4* normal_opacity,
@@ -492,10 +511,15 @@ void FORWARD::render(
 		point_list,
 		W, H,
 		focal_x, focal_y,
+		max_dist_debug,
+		apply_mask,
+		slice,
+		orig_points,
 		means2D,
 		env_scope_mask,
 		colors,
 		refl_strengths,
+		img_mask,
 		transMats,
 		depths,
 		normal_opacity,

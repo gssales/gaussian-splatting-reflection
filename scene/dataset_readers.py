@@ -111,6 +111,16 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
                 [0, focal_length_x, intr.params[2]],
                 [0, 0, 1],
             ])
+        elif intr.model=="OPENCV":
+            focal_length_x = intr.params[0]
+            focal_length_y = intr.params[1]
+            FovY = focal2fov(focal_length_y, height)
+            FovX = focal2fov(focal_length_x, width)
+            K = np.array([
+                [focal_length_x, 0, intr.params[2]],
+                [0, focal_length_y, intr.params[3]],
+                [0, 0, 1],
+            ])
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
@@ -208,7 +218,16 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
-        fovx = contents["camera_angle_x"]
+
+        if "camera_angle_x" not in contents.keys():
+            fovx = None
+        else:
+            fovx = contents["camera_angle_x"] 
+            
+        if "GlossyReal" in contents.keys():
+            GlossyReal = True
+        else:
+            GlossyReal = False
 
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
@@ -228,13 +247,13 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             image_name = Path(cam_name).stem
             image = Image.open(image_path)
 
-            im_data = np.array(image.convert("RGBA"))
-
-            bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
-
-            norm_data = im_data / 255.0
-            arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            mask_path = os.path.join(path, frame["file_path"] + "_alpha" + extension)
+            if os.path.exists(mask_path):
+                mask = Image.open(mask_path)
+                im_data = np.array(image.convert("RGB"))
+                a_data = np.array(mask.convert("RGB"))[..., 0:1]
+                arr = np.concatenate((im_data, a_data), axis=-1)
+                image = Image.fromarray(np.array(arr, dtype=np.byte), "RGBA")
             
             fo = fov2focal(fovx, image.size[0])
             W,H = image.size[0], image.size[1]
@@ -245,9 +264,19 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 [0, 0, 1],
             ])
 
-            fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
-            FovY = fovy 
-            FovX = fovx
+            if fovx == None:
+                if GlossyReal:
+                    focal_length = frame["fl_x"]
+                    FovY = focal2fov(focal_length, image.size[1])
+                    FovX = focal2fov(focal_length, image.size[0])
+                else:
+                    focal_length = contents["fl_x"]
+                    FovY = focal2fov(focal_length, image.size[1])
+                    FovX = focal2fov(focal_length, image.size[0])
+            else:
+                fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+                FovY = fovx 
+                FovX = fovy
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, K=K, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name,

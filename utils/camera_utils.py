@@ -18,7 +18,7 @@ WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
     orig_w, orig_h = cam_info.image.size
-    if args.resolution in [1, 2, 4, 8]:
+    if args.resolution in [1, 2, 4, 6, 8]:
         scale = resolution_scale * args.resolution
         resolution = round(orig_w / scale), round(orig_h / scale)
     else:  # should be a type that converts to float
@@ -48,7 +48,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     gt_image = resized_image_rgb[:3, ...]
     loaded_mask = None
 
-    if resized_image_rgb.shape[1] == 4:
+    if resized_image_rgb.shape[0] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
 
     return Camera(resolution, colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 

@@ -43,6 +43,7 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& env_scope_mask,
 	const torch::Tensor& colors,
 	const torch::Tensor &refl_strengths,
+	const torch::Tensor &img_mask,
 	const torch::Tensor& opacity,
 	const torch::Tensor& scales,
 	const torch::Tensor& rotations,
@@ -58,7 +59,9 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
-	const bool debug)
+	const bool debug,
+	const bool apply_mask,
+	const bool slice)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
 	AT_ERROR("means3D must have dimensions (num_points, 3)");
@@ -72,6 +75,8 @@ RasterizeGaussiansCUDA(
   CHECK_INPUT(background);
   CHECK_INPUT(means3D);
   CHECK_INPUT(colors);
+  CHECK_INPUT(refl_strengths);
+  CHECK_INPUT(img_mask);
   CHECK_INPUT(opacity);
   CHECK_INPUT(scales);
   CHECK_INPUT(rotations);
@@ -128,6 +133,7 @@ RasterizeGaussiansCUDA(
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data<float>(), 
 		refl_strengths.contiguous().data<float>(),
+		img_mask.contiguous().data<float>(),
 		opacity.contiguous().data<float>(), 
 		scales.contiguous().data_ptr<float>(),
 		scale_modifier,
@@ -144,7 +150,7 @@ RasterizeGaussiansCUDA(
 		out_refl_strength_mapptr,
 		radii.contiguous().data<int>(),
 		is_rendered.contiguous().data<int>(),
-		debug);
+		debug, apply_mask, slice);
   }
   return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer, out_refl_strength_map, is_rendered);
 }

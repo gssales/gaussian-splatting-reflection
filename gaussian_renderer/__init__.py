@@ -13,6 +13,7 @@ import torch
 import math
 from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from arguments import OptimizationParams
+from scene.cameras import Camera
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.general_utils import sample_camera_rays, get_env_rayd1, get_env_rayd2
@@ -38,7 +39,7 @@ def render_env_map(pc: GaussianModel):
     env_cood2 = sample_cubemap_color(get_env_rayd2(512,1024), pc.get_envmap)
     return {'env_cood1': env_cood1, 'env_cood2': env_cood2}
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, initial_stage=False, env_scope_center=[0.0,0.0,0.0], env_scope_radius=0.0):
+def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, initial_stage=False, env_scope_center=[0.0,0.0,0.0], env_scope_radius=0.0, img_mask=None):
     """
     Render the scene. 
     
@@ -69,7 +70,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
-        # pipe.debug
+        apply_mask=False,
+        slice=False
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -124,6 +126,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             shs = pc.get_features
     else:
         colors_precomp = override_color
+
+    if img_mask is None:
+        mask = torch.full((1, int(viewpoint_camera.image_height), int(viewpoint_camera.image_width)), 1.0).float().cuda()
+    else:
+        mask = img_mask
         
     refl_strengths = pc.get_refl
 
@@ -137,7 +144,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp,
-        env_scope_mask = env_scope_mask
+        env_scope_mask = env_scope_mask,
+        img_mask = mask
     )
     
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
