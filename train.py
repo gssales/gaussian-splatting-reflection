@@ -24,6 +24,7 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import traceback
 import torchvision
+from torchvision.utils import make_grid, save_image
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -107,11 +108,12 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         gt_image = viewpoint_cam.original_image.cuda()
         gt_alpha_mask = viewpoint_cam.gt_alpha_mask
 
-        if gt_alpha_mask is not None:
-            gt_alpha_mask = gt_alpha_mask.cuda()
-            gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
+        if opt.use_alpha_mask:
+            image = image * alpha + (1-alpha) * background[:, None, None]
+            if gt_alpha_mask is not None:
+                gt_alpha_mask = gt_alpha_mask.cuda()
+                gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
 
-        image = image * alpha + (1-alpha) * background[:, None, None]
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
@@ -120,8 +122,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
         
         # in synthetic scenes, forces gaussian of the same color as the background to be transparent
-        if gt_alpha_mask is not None:
-            loss += l1_loss(alpha, gt_alpha_mask)
+        if opt.use_alpha_mask and gt_alpha_mask is not None:
+            loss += 0.75 * l1_loss(alpha, gt_alpha_mask)
 
         def get_outside_msk():
             return None if not opt.use_env_scope else \
@@ -315,11 +317,6 @@ def prepare_output_and_logger(args):
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
-import os
-from typing import Optional
-
-import torch
-from torchvision.utils import make_grid, save_image
 
 @torch.no_grad()
 def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs,
@@ -338,8 +335,7 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
         from utils.general_utils import colormap  # used repeatedly
-
-        from utils.general_utils import colormap  # already used
+        from utils.image_utils import colormap as img_colormap  # different colormap function
 
         def to_3ch(t: torch.Tensor) -> torch.Tensor:
             """
@@ -412,6 +408,7 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                 for idx, viewpoint in enumerate(config['cameras']):
                     render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=False, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
+                    base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
 
                     # ---- TensorBoard logging (unchanged, except minor refactor) ----
@@ -489,11 +486,12 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                     if base_save_dir is not None:
                         tiles = []
 
-                        # 1) Render (B,C,H,W)
-                        tiles.append(to_3ch(image))
-
-                        # 2) Ground truth (B,C,H,W)
+                        # 1) Ground truth (B,C,H,W)
                         tiles.append(to_3ch(gt_image))
+
+                        # 2) Render (B,C,H,W)
+                        tiles.append(to_3ch(image))
+                        tiles.append(to_3ch(base_color))
 
                         # 3) Depth (colored)
                         try:
@@ -502,12 +500,13 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                             depth_norm = depth / norm                 # same shape as depth
 
                             # Convert to (H,W) for colormap
-                            depth_np = depth_norm.squeeze().cpu().numpy()  # (H,W)
-                            depth_color = colormap(depth_np, cmap='turbo') # (H,W,3)
-                            depth_t = torch.from_numpy(depth_color).float()  # (H,W,3)
-                            tiles.append(to_3ch(depth_t))
-                        except Exception:
-                            pass
+                            # depth_np = depth_norm.squeeze().cpu().numpy()  # (H,W)
+                            depth_color = img_colormap(depth_norm, cmap='turbo') # (H,W,3)
+                            # depth_t = torch.from_numpy(depth_color).float()  # (H,W,3)
+                            tiles.append(to_3ch(depth_color))
+                        except Exception as e:
+                            print(e)
+                            traceback.print_exc()
 
                         # 4) Other attributes if present
                         try:
@@ -519,20 +518,15 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                                 sn = render_pkg["surf_normal"] * 0.5 + 0.5
                                 tiles.append(to_3ch(sn))
 
-                            if "rend_alpha" in render_pkg:
-                                ra = render_pkg["rend_alpha"]                # maybe (1,1,H,W) or (1,H,W)
-                                tiles.append(to_3ch(ra))
-
                             if "refl_strength_map" in render_pkg:
                                 rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
                                 tiles.append(to_3ch(rm))
 
-                            if "rend_dist" in render_pkg:
-                                rd = render_pkg["rend_dist"]                 # (1,1,H,W) or (1,H,W)
-                                rd_np = rd.squeeze().cpu().numpy()           # (H,W)
-                                rd_color = colormap(rd_np)                   # (H,W,3)
-                                rd_t = torch.from_numpy(rd_color).float()    # (H,W,3)
-                                tiles.append(to_3ch(rd_t))
+                            # if "rend_dist" in render_pkg:
+                            #     rd = render_pkg["rend_dist"]                 # (1,1,H,W) or (1,H,W)
+                            #     # rd_np = rd.squeeze().cpu().numpy()           # (H,W)
+                            #     rd_color = img_colormap(rd)                   # (H,W,3)
+                            #     tiles.append(to_3ch(rd_color))
                         except Exception:
                             pass
 

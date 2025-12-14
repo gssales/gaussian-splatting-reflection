@@ -118,6 +118,8 @@ class OptimizationParams(ParamGroup):
         self.env_scope_center = [0.,0.,0.] # TODO
         self.env_scope_radius = 0.0 # TODO
 
+        self.use_alpha_mask = False # TODO
+
         self.normal_prop_interval = 1000
         self.normal_prop_until_iter = 24_000 # TODO
         
