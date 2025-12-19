@@ -56,6 +56,7 @@ class ModelParams(ParamGroup):
         self._images = "images"
         self._resolution = -1
         self._white_background = False
+        self.random_background_color = False
         self.cubemap_resol = 128
         self.data_device = "cuda"
         self.eval = False

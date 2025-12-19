@@ -99,6 +99,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
         vind = viewpoint_indices.pop(rand_idx)
 
+        if dataset.random_background_color:
+            background = torch.rand(3, dtype=torch.float32, device="cuda")
+
         # Render
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, initial_stage=iteration<opt.init_until_iter, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)
         image, viewspace_point_tensor, visibility_filter, radii, alpha = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["rend_alpha"]
@@ -108,11 +111,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         gt_image = viewpoint_cam.original_image.cuda()
         gt_alpha_mask = viewpoint_cam.gt_alpha_mask
 
-        if opt.use_alpha_mask:
-            image = image * alpha + (1-alpha) * background[:, None, None]
-            if gt_alpha_mask is not None:
-                gt_alpha_mask = gt_alpha_mask.cuda()
-                gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
+        # if opt.use_alpha_mask:
+        image = image * alpha + (1-alpha) * background[:, None, None]
+        if gt_alpha_mask is not None:
+            gt_alpha_mask = gt_alpha_mask.cuda()
+            gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
 
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
@@ -189,7 +192,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'normal_loss': normal_loss,
                 'total_loss': loss.item()
             }
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.model_path)
+            bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), dataset.model_path)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
@@ -277,7 +281,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     net_image_bytes = None
                     custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
                     if custom_cam != None:
-                        render_pkg = render(custom_cam, gaussians, pipe, background, scaling_modifer, initial_stage=False, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
+                        bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+                        render_pkg = render(custom_cam, gaussians, pipe, bg, scaling_modifer, initial_stage=False, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
                         net_image = render_net_image(render_pkg, view_render_options, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
