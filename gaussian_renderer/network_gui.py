@@ -48,7 +48,7 @@ def try_connect(render_items):
     global conn, addr, listener
     try:
         conn, addr = listener.accept()
-        print(f"\nConnected by {addr}")
+        # print(f"\nConnected by {addr}")
         conn.settimeout(None)
         send_json_data(conn, render_items)
     except Exception as inst:

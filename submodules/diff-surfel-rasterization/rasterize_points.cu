@@ -36,12 +36,14 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
 	return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& env_scope_mask,
 	const torch::Tensor& colors,
 	const torch::Tensor &refl_strengths,
+	const torch::Tensor &img_mask,
 	const torch::Tensor& opacity,
 	const torch::Tensor& scales,
 	const torch::Tensor& rotations,
@@ -57,13 +59,15 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
-	const bool debug)
+	const bool debug,
+	const bool apply_mask,
+	const bool slice)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
 	AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
 
-  
+  // P is amount of points
   const int P = means3D.size(0);
   const int H = image_height;
   const int W = image_width;
@@ -71,6 +75,8 @@ RasterizeGaussiansCUDA(
   CHECK_INPUT(background);
   CHECK_INPUT(means3D);
   CHECK_INPUT(colors);
+  CHECK_INPUT(refl_strengths);
+  CHECK_INPUT(img_mask);
   CHECK_INPUT(opacity);
   CHECK_INPUT(scales);
   CHECK_INPUT(rotations);
@@ -84,7 +90,7 @@ RasterizeGaussiansCUDA(
   auto float_opts = means3D.options().dtype(torch::kFloat32);
 
   torch::Tensor out_color = torch::full({NUM_CHANNELS, H, W}, 0.0, float_opts);
-  torch::Tensor out_others = torch::full({3+3+1, H, W}, 0.0, float_opts);
+  torch::Tensor out_others = torch::full({3+3+1+1, H, W}, 0.0, float_opts);
 
 	torch::Tensor out_refl_strength_map = torch::full({0, H, W}, 0.0, float_opts);
 	float *out_refl_strength_mapptr = nullptr;
@@ -92,12 +98,15 @@ RasterizeGaussiansCUDA(
 	out_refl_strength_mapptr = out_refl_strength_map.data<float>();
 
   torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+	torch::Tensor is_rendered = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
   
   torch::Device device(torch::kCUDA);
   torch::TensorOptions options(torch::kByte);
+	// cria buffers para as estruturas auxiliares
   torch::Tensor geomBuffer = torch::empty({0}, options.device(device));
   torch::Tensor binningBuffer = torch::empty({0}, options.device(device));
   torch::Tensor imgBuffer = torch::empty({0}, options.device(device));
+	// função para aumentar o armazenamento dos buffer
   std::function<char*(size_t)> geomFunc = resizeFunctional(geomBuffer);
   std::function<char*(size_t)> binningFunc = resizeFunctional(binningBuffer);
   std::function<char*(size_t)> imgFunc = resizeFunctional(imgBuffer);
@@ -105,6 +114,7 @@ RasterizeGaussiansCUDA(
   int rendered = 0;
   if(P != 0)
   {
+		// M talvez seja a quantidade de canais de features?
 	  int M = 0;
 	  if(sh.size(0) != 0)
 	  {
@@ -119,9 +129,11 @@ RasterizeGaussiansCUDA(
 		background.contiguous().data<float>(),
 		W, H,
 		means3D.contiguous().data<float>(),
+		env_scope_mask.contiguous().data<bool>(),
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data<float>(), 
 		refl_strengths.contiguous().data<float>(),
+		img_mask.contiguous().data<float>(),
 		opacity.contiguous().data<float>(), 
 		scales.contiguous().data_ptr<float>(),
 		scale_modifier,
@@ -137,9 +149,10 @@ RasterizeGaussiansCUDA(
 		out_others.contiguous().data<float>(),
 		out_refl_strength_mapptr,
 		radii.contiguous().data<int>(),
-		debug);
+		is_rendered.contiguous().data<int>(),
+		debug, apply_mask, slice);
   }
-  return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer, out_refl_strength_map);
+  return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer, out_refl_strength_map, is_rendered);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -185,6 +198,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   CHECK_INPUT(imageBuffer);
   CHECK_INPUT(geomBuffer);
 
+	// P = amount of points
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
   const int W = dL_dout_color.size(2);

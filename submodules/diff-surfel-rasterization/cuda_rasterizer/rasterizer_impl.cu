@@ -203,9 +203,11 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* background,
 	const int width, int height,
 	const float* means3D,
+	const bool* env_scope_mask,
 	const float* shs,
 	const float* colors_precomp,
 	const float* refl_strengths,
+	const float* img_mask,
 	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
@@ -220,7 +222,10 @@ int CudaRasterizer::Rasterizer::forward(
 	float* out_others,
 	float* out_refl_strength_map,
 	int* radii,
-	bool debug)
+	int* is_rendered,
+	bool debug,
+	bool apply_mask,
+	bool slice)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -325,13 +330,21 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* transMat_ptr = transMat_precomp != nullptr ? transMat_precomp : geomState.transMat;
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
+		// cada range tem um x e y, que são o indice de inicio de fim do tile
 		imgState.ranges,
+		// lista de pontos ordenados por tile e profundidade, com duplicatas para os tiles
 		binningState.point_list,
 		width, height,
 		focal_x, focal_y,
+		scale_modifier,
+		apply_mask,
+		slice,
+		means3D,
 		geomState.means2D,
+		env_scope_mask,
 		feature_ptr,
 		refl_strengths,
+		img_mask,
 		transMat_ptr,
 		geomState.depths,
 		geomState.normal_opacity,
@@ -340,7 +353,8 @@ int CudaRasterizer::Rasterizer::forward(
 		background,
 		out_color,
 		out_others,
-		out_refl_strength_map), debug)
+		out_refl_strength_map,
+		is_rendered), debug)
 
 	return num_rendered;
 }

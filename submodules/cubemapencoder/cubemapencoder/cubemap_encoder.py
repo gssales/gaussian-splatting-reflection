@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 #import better_cubemap
 from torch.cuda.amp import custom_bwd, custom_fwd
+from torchvision.transforms import functional as F
 
 try:
     import _cubemapencoder as _backend
@@ -42,7 +43,7 @@ class _cubemap_encode(torch.autograd.Function):
     @staticmethod
     @custom_bwd
     def backward(ctx, grad_outputs):
-        inputs, embeddings, params = ctx.saved_variables
+        inputs, embeddings, params = ctx.saved_tensors
         grad_outputs = grad_outputs.contiguous()
 
         C = embeddings.shape[1]
@@ -90,13 +91,31 @@ class CubemapEncoder(nn.Module):
         self.seamless = 1
 
         self.params = nn.ParameterDict({
-            'Cubemap_texture': nn.Parameter(torch.rand(6, self.output_dim, resolution, resolution) * 0.2 + 0.5), 
+            'Cubemap_texture': nn.Parameter(torch.rand(6, self.output_dim, resolution, resolution) - 0.5), 
             'Cubemap_failv': nn.Parameter(torch.zeros(self.output_dim))
         })
         self.n_elems = 6 * self.output_dim * resolution * resolution + self.output_dim
 
     def __repr__(self):
         return f"CubemapEncoder: input_dim={self.input_dim} output_dim={self.output_dim} resolution={self.resolution} -> {self.n_elems} interpolation={self.interpolation} seamless={self.seamless}"
+
+    def resize(self, new_resolution):
+        self.resolution = new_resolution
+        self.params['Cubemap_texture'] = nn.functional.interpolate(self.params['Cubemap_texture'], size=(new_resolution, new_resolution), mode='bicubic', align_corners=True)
+        self.n_elems = 6 * self.output_dim * self.resolution * self.resolution + self.output_dim
+
+    def filter(self, activation, inverse_activation, factor = 2.0):
+        textures = self.params['Cubemap_texture']
+        textures = activation(textures)
+        textures =  F.adjust_sharpness(textures, factor)
+        textures = torch.clamp(textures, min=1e-3, max=1-1e-3)
+        textures = inverse_activation(textures)
+        self.params['Cubemap_texture'] = textures
+
+    def set_textures(self, textures):
+        self.resolution = textures.shape[2]
+        self.params['Cubemap_texture'] = nn.Parameter(textures)
+        self.n_elems = 6 * self.output_dim * self.resolution * self.resolution + self.output_dim
 
     # inputs: lista de vetores de reflexão de cada pixel (ver gaussian_renderer)
     def forward(self, inputs):

@@ -172,6 +172,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
+	// idx é o indice da gaussiana
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P)
 		return;
@@ -206,6 +207,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		normal = make_float3(0.0, 0.0, 1.0);
 	}
 
+	// inverte o vertor normal da gaussiana para apontar para a câmera
 #if DUAL_VISIABLE
 	float cos = -sumf3(p_view * normal);
 	if (cos == 0) return;
@@ -260,9 +262,15 @@ renderCUDA(
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	float focal_x, float focal_y,
+	const float max_dist_debug,
+	const bool apply_mask,
+	const bool slice,
+	const float* orig_points,
 	const float2* __restrict__ points_xy_image,
+	const bool* __restrict__ env_scope_mask,
 	const float* __restrict__ features,
 	const float* __restrict__ refl_stengths,
+	const float* __restrict__ img_mask,
 	const float* __restrict__ transMats,
 	const float* __restrict__ depths,
 	const float4* __restrict__ normal_opacity,
@@ -271,7 +279,8 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	float* __restrict__ out_others,
-	float* __restrict__ out_refl_strength_map)
+	float* __restrict__ out_refl_strength_map,
+	int* __restrict__ is_rendered)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -306,6 +315,7 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 	float refl_strength = 0.0f;
+	float mask = 0.0f;
 
 
 #if RENDER_AXUTILITY
@@ -382,6 +392,14 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
+			// ================
+
+			float3 point = ((float3*)orig_points)[collected_id[j]];
+			if (slice && (point.x >= max_dist_debug || point.x <= -max_dist_debug))
+				continue;
+
+			// ================
+
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
@@ -420,13 +438,20 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-				refl_strength += refl_stengths[collected_id[j]] * w;
+			refl_strength += refl_stengths[collected_id[j]] * w;
+
+			if (env_scope_mask[collected_id[j]])
+				mask = 1.0f;
 
 			T = test_T;
 
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
+
+			// mark Gaussians that contribute to image
+			if (!apply_mask || img_mask[H * W + pix_id] == 1.0)
+				atomicExch(&is_rendered[collected_id[j]], 1);
 		}
 	}
 
@@ -449,6 +474,7 @@ renderCUDA(
 		for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
+		out_others[pix_id + MASK_OFFSET * H * W] = mask;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
 #endif
 	}
@@ -460,9 +486,15 @@ void FORWARD::render(
 	const uint32_t* point_list,
 	int W, int H,
 	float focal_x, float focal_y,
+	const float max_dist_debug,
+	const bool apply_mask,
+	const bool slice,
+	const float* orig_points,
 	const float2* means2D,
+	const bool* env_scope_mask,
 	const float* colors,
 	const float* refl_strengths,
+	const float* img_mask,
 	const float* transMats,
 	const float* depths,
 	const float4* normal_opacity,
@@ -471,16 +503,23 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color,
 	float* out_others,
-	float* out_refl_strength_map)
+	float* out_refl_strength_map,
+	int* is_rendered)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
 		W, H,
 		focal_x, focal_y,
+		max_dist_debug,
+		apply_mask,
+		slice,
+		orig_points,
 		means2D,
+		env_scope_mask,
 		colors,
 		refl_strengths,
+		img_mask,
 		transMats,
 		depths,
 		normal_opacity,
@@ -489,7 +528,8 @@ void FORWARD::render(
 		bg_color,
 		out_color,
 		out_others,
-		out_refl_strength_map);
+		out_refl_strength_map,
+		is_rendered);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

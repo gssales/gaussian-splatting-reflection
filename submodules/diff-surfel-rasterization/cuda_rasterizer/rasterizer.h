@@ -36,9 +36,11 @@ namespace CudaRasterizer
 			const float* background,
 			const int width, int height,
 			const float* means3D,
+			const bool* env_scope_mask,
 			const float* shs,
 			const float* colors_precomp,
 			const float* refl_strengths,
+			const float* img_mask,
 			const float* opacities,
 			const float* scales,
 			const float scale_modifier,
@@ -53,7 +55,10 @@ namespace CudaRasterizer
 			float* out_others,
 			float* out_refl_strength_map,
 			int* radii = nullptr,
-			bool debug = false);
+			int* is_rendered = nullptr,
+			bool debug = false,
+			bool apply_mask = false,
+			bool slice = false);
 
 		static void backward(
 			const int P, int D, int M, int R,

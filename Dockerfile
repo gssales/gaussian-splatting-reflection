@@ -21,6 +21,14 @@ ENV PATH=$CONDA_DIR/bin:$PATH
 WORKDIR /workspace
 COPY . .
 
-RUN conda env create --file environment-linux.yml && conda init bash
+RUN conda create -n gs_reflection python=3.7.16 && conda init bash
 
 SHELL ["conda", "run", "-n", "gs_reflection", "/bin/bash", "-c"]
+
+RUN pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu113 \
+  && pip install submodules/diff-surfel-rasterization \
+  && pip install submodules/cubemapencoder \
+  && pip install submodules/fused-ssim \
+  && pip install submodules/simple-knn
+
+# ENTRYPOINT ["conda", "run", "-n", "gs_reflection", "/bin/bash", "-c"]

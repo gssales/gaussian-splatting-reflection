@@ -54,18 +54,14 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
-        self._depths = ""
         self._resolution = -1
         self._white_background = False
-        self.train_test_exp = False
+        self.random_background_color = False
+        self.cubemap_resol = 128
         self.data_device = "cuda"
         self.eval = False
-
+        self.num_points = 100_000
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Surface Depth', 'Depth', 'Edge', 'Curvature'] # TODO
-
-        self.deferred_reflection = False # TODO
-        self.surfel_splatting = False # TODO
-
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -77,64 +73,64 @@ class PipelineParams(ParamGroup):
     def __init__(self, parser):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
+        self.depth_ratio = 0.0
         self.debug = False
-        self.antialiasing = False
-        
-        self.depth_ratio = 0.0 # TODO
-
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
-        self.iterations = 30_000
+        self.synthetic = False
+        self.iterations = 31_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
         self.feature_lr = 0.0025
-        self.opacity_lr = 0.025
+        self.opacity_lr = 0.05
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
-        self.exposure_lr_init = 0.01
-        self.exposure_lr_final = 0.001
-        self.exposure_lr_delay_steps = 0
-        self.exposure_lr_delay_mult = 0.0
+        self.rotation_lr_init =  0.001
+        self.rotation_lr_final = 0.0
+        self.rotation_lr_delay_mult = 0.01
+        self.rotation_lr_max_steps = 45_000
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
+        self.lambda_dist = 0.0
+        self.lambda_normal = 0.05
+        self.opacity_cull = 0.05
+
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
-        self.depth_l1_weight_init = 1.0
-        self.depth_l1_weight_final = 0.01
-        self.random_background = False
-        self.optimizer_type = "default"
         
-        self.opacity_cull = 0.005
         self.refl_lr = 0.006 # TODO
         self.envmap_cubemap_lr = 0.05 # TODO
-        self.refl_init_value = 1e-3 # TODO
+        self.refl_init_value = 1e-2 # TODO
         self.lambda_refl_smooth = 0.4 # TODO
-        self.init_until_iter = 3000 # TODO
-        self.feature_rest_from_iter = 10_000 # TODO
-        self.normal_prop_until_iter = 24_000 # TODO
+        self.init_until_iter = 500 # TODO
+        self.feature_rest_from_iter = 7_000 # TODO
         self.opac_lr0_interval = 200 # TODO
-        self.densification_interval_when_prop = 500 # TODO
+        self.densification_interval_when_prop = 100 # TODO
         self.longer_prop_iter = 0 # TODO
+
         self.use_env_scope = False # TODO
         self.env_scope_center = [0.,0.,0.] # TODO
         self.env_scope_radius = 0.0 # TODO
-        
-        self.color_sabotage_until_iter = 24_000 # TODO
 
-        self.lambda_dist = 0.0 # TODO
-        self.lambda_normal = 0.05 # TODO
+        self.use_alpha_mask = False # TODO
+
+        self.normal_prop_interval = 1000
+        self.normal_prop_until_iter = 24_000 # TODO
+        
+        self.color_sabotage_interval = 1000
+        self.color_sabotage_until_iter = 24_000 # TODO
 
         self.color_sabotage = False # TODO
         self.normal_propagation = False # TODO
-        self.depth_distortion_loss = False # TODO
-        self.normal_consistency_loss = False # TODO
+        self.disable_depth_distortion_loss = False # TODO
+        self.disable_normal_consistentcy_loss = False # TODO
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
