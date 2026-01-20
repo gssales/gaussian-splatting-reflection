@@ -48,7 +48,7 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pip
     render_times = []
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         t1 = time.time()
-        render_pkg = render(view, gaussians, pipeline, background)
+        render_pkg = render(view, gaussians, pipeline, background, initial_stage=False, third_stage=True)
         render_time = time.time() - t1
         render_times.append(render_time)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)

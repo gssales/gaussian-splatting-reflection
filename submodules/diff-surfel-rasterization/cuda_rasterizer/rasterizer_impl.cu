@@ -207,6 +207,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* shs,
 	const float* colors_precomp,
 	const float* refl_strengths,
+	const float* iors,
 	const float* img_mask,
 	const float* opacities,
 	const float* scales,
@@ -221,6 +222,7 @@ int CudaRasterizer::Rasterizer::forward(
 	float* out_color,
 	float* out_others,
 	float* out_refl_strength_map,
+	float* out_ior_map,
 	int* radii,
 	int* is_rendered,
 	bool debug,
@@ -344,6 +346,7 @@ int CudaRasterizer::Rasterizer::forward(
 		env_scope_mask,
 		feature_ptr,
 		refl_strengths,
+		iors,
 		img_mask,
 		transMat_ptr,
 		geomState.depths,
@@ -354,6 +357,7 @@ int CudaRasterizer::Rasterizer::forward(
 		out_color,
 		out_others,
 		out_refl_strength_map,
+		out_ior_map,
 		is_rendered), debug)
 
 	return num_rendered;
@@ -369,6 +373,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* shs,
 	const float* colors_precomp,
 	const float* refl_strengths,
+	const float* iors,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
@@ -384,11 +389,13 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* dL_dpix,
 	const float* dL_depths,
 	const float* dL_drefl_strength_map,
+	const float* dL_dior_map,
 	float* dL_dmean2D,
 	float* dL_dnormal,
 	float* dL_dopacity,
 	float* dL_dcolor,
 	float* dL_drefl_strengths,
+	float* dL_diors,
 	float* dL_dmean3D,
 	float* dL_dtransMat,
 	float* dL_dsh,
@@ -429,6 +436,7 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.normal_opacity,
 		color_ptr,
 		refl_strengths,
+		iors,
 		transMat_ptr,
 		depth_ptr,
 		imgState.accum_alpha,
@@ -436,12 +444,14 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dpix,
 		dL_depths,
 		dL_drefl_strength_map,
+		dL_dior_map,
 		dL_dtransMat,
 		(float3*)dL_dmean2D,
 		dL_dnormal,
 		dL_dopacity,
 		dL_dcolor,
-		dL_drefl_strengths), debug)
+		dL_drefl_strengths,
+		dL_diors), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

@@ -61,7 +61,7 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
     elif output == 'base color':
         net_image = render_pkg["base_color_map"]
     elif output == 'refl. strength':
-        net_image = render_pkg["refl_strength_map"].repeat(3,1,1)
+        net_image = render_pkg["reflectance"].repeat(3,1,1)
     elif output == 'refl. color':
         net_image = render_pkg["refl_color_map"]
     elif output == 'edge':

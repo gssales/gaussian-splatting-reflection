@@ -64,6 +64,7 @@ namespace FORWARD
 		const bool* env_scope_mask,
 		const float* features,
 		const float* refl_strengths,
+		const float* iors,
 		const float* img_mask,
 		const float* transMats,
 		const float* depths,
@@ -74,6 +75,7 @@ namespace FORWARD
 		float* out_color,
 		float* out_others,
 		float* out_refl_strength_map,
+		float* out_ior_map,
 		int* is_rendered);
 }
 

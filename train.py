@@ -101,9 +101,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
         if dataset.random_background_color:
             background = torch.rand(3, dtype=torch.float32, device="cuda")
-
+	
         # Render
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, initial_stage=iteration<opt.init_until_iter, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background, initial_stage=iteration<opt.init_until_iter, third_stage=iteration>=15_000, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)
         image, viewspace_point_tensor, visibility_filter, radii, alpha = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["rend_alpha"]
         env_scope_mask = render_pkg["env_scope_mask"]
 
@@ -136,6 +136,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             refls = gaussians.get_refl
             refl_msk_loss = refls[get_outside_msk()].mean()
             loss += refl_mask_loss_weight * refl_msk_loss
+            ior = gaussians.get_ior
+            ior_msk_loss = ior[get_outside_msk()].mean()
+            loss += refl_mask_loss_weight * ior_msk_loss
 
          # regularization
         if not opt.disable_normal_consistentcy_loss:
@@ -200,11 +203,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 for i in range(6):
                     torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, 'cubemap/{}_{}.png'.format(i, iteration)))
 
-            if iteration == densify_until_iteration or iteration == 45000:
-                gaussians.double_env_map()
+            # if iteration == densify_until_iteration or iteration == 45000:
+            #     gaussians.double_env_map()
 
-            if iteration > densify_until_iteration*2:
-                gaussians.freeze_xyz()
+            # if iteration > densify_until_iteration*2:
+            #     gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
             #     gaussians.filter_env_map()
@@ -282,7 +285,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
                     if custom_cam != None:
                         bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-                        render_pkg = render(custom_cam, gaussians, pipe, bg, scaling_modifer, initial_stage=False, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
+                        render_pkg = render(custom_cam, gaussians, pipe, bg, scaling_modifer, initial_stage=False, third_stage=True, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
                         net_image = render_net_image(render_pkg, view_render_options, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
@@ -411,7 +414,7 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=False, *renderArgs)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=False, third_stage=True, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
@@ -525,6 +528,12 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
 
                             if "refl_strength_map" in render_pkg:
                                 rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
+                                tiles.append(to_3ch(rm))
+                            if "fresnel" in render_pkg:
+                                rm = render_pkg["fresnel"]         # maybe (1,1,H,W) or (1,H,W)
+                                tiles.append(to_3ch(rm))
+                            if "reflectance" in render_pkg:
+                                rm = render_pkg["reflectance"]         # maybe (1,1,H,W) or (1,H,W)
                                 tiles.append(to_3ch(rm))
 
                             # if "rend_dist" in render_pkg:

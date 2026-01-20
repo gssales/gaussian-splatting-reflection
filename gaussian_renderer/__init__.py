@@ -19,6 +19,22 @@ from utils.sh_utils import eval_sh
 from utils.general_utils import sample_camera_rays, get_env_rayd1, get_env_rayd2
 from utils.point_utils import depth_to_normal
 
+def fresnel(raysd, normal, ior):
+    H,W = raysd.shape[:2]
+    rays = raysd.reshape(-1,3)
+    normals = normal.reshape(-1,3)
+    cosi = torch.clamp(-1.0 * torch.sum(rays * normals, dim=-1, keepdim=True), -1.0, 1.0)
+    etai = 1.0
+    etat = ior.reshape(-1,1)
+    sint = etai / etat * torch.sqrt(torch.clamp(1 - cosi * cosi, min=0.0))
+    cost = torch.sqrt(torch.clamp(1 - sint * sint, min=0.0))
+    cosi = torch.abs(cosi)
+    Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost) + 1e-6)
+    Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost) + 1e-6)
+    reflectance = (Rs * Rs + Rp * Rp) / 2.0
+    reflectance = torch.clamp(reflectance, 0.0, 1.0)
+    return reflectance.reshape(H,W)
+
 def reflection(rayd, normal):
     refl = rayd - 2*normal*torch.sum(rayd*normal, dim=-1, keepdim=True)
     return refl
@@ -39,7 +55,7 @@ def render_env_map(pc: GaussianModel):
     env_cood2 = sample_cubemap_color(get_env_rayd2(512,1024), pc.get_envmap)
     return {'env_cood1': env_cood1, 'env_cood2': env_cood2}
 
-def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, initial_stage=False, env_scope_center=[0.0,0.0,0.0], env_scope_radius=0.0, img_mask=None):
+def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, initial_stage=False, third_stage=False, env_scope_center=[0.0,0.0,0.0], env_scope_radius=0.0, img_mask=None, apply_mask=False):
     """
     Render the scene. 
     
@@ -132,14 +148,17 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
     else:
         mask = img_mask
         
+    # refl_strengths = pc.get_refl
     refl_strengths = pc.get_refl
+    iors = torch.zeros_like(refl_strengths) + 1.5
 
-    base_color, radii, allmap, refl_strength_map, is_rendered = rasterizer(
+    base_color, radii, allmap, refl_strength_map, ior_map, is_rendered = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
         colors_precomp = colors_precomp,
         refl_strengths = refl_strengths,
+        iors = iors,
         opacities = opacity,
         scales = scales,
         rotations = rotations,
@@ -204,11 +223,17 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'env_scope_mask': mask
         }
     else:
-        n_map = render_normal.permute(1,2,0)
-        n_map = n_map / (torch.norm(n_map, dim=-1, keepdim=True)+1e-6)
-        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, n_map)
 
-        final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
+        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
+        rays_d = sample_camera_rays(viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T)
+        fresnel_refl = fresnel(rays_d, render_normal, ior_map)
+
+        if third_stage:
+            reflectance = refl_strength_map + (1 - refl_strength_map) * fresnel_refl
+        else:
+            reflectance = refl_strength_map
+
+        final_image = (1-reflectance) * base_color + reflectance * refl_color
         # final_image = final_image.clamp(0, 1)
 
         out = {
@@ -223,6 +248,8 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'surf_normal': surf_normal,
             'env_scope_mask': mask,
             "refl_strength_map": refl_strength_map,
+            "fresnel": fresnel_refl,
+            "reflectance": reflectance,
             "refl_color_map": refl_color,
             "base_color_map": base_color,
             "is_rendered": is_rendered

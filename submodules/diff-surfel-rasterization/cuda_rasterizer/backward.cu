@@ -153,18 +153,21 @@ renderCUDA(
 	const float* __restrict__ transMats,
 	const float* __restrict__ colors,
 	const float* __restrict__ refl_strengths,
+	const float* __restrict__ iors,
 	const float* __restrict__ depths,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
 	const float* __restrict__ dL_depths,
 	const float* __restrict__ dL_drefl_strength_map,
+	const float* __restrict__ dL_dior_map,
 	float * __restrict__ dL_dtransMat,
 	float3* __restrict__ dL_dmean2D,
 	float* __restrict__ dL_dnormal3D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_drefl_strengths)
+	float* __restrict__ dL_drefl_strengths,
+	float* __restrict__ dL_diors)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -188,6 +191,7 @@ renderCUDA(
 	__shared__ float4 collected_normal_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_refl_strengths[BLOCK_SIZE];
+	__shared__ float collected_iors[BLOCK_SIZE];
 	__shared__ float3 collected_Tu[BLOCK_SIZE];
 	__shared__ float3 collected_Tv[BLOCK_SIZE];
 	__shared__ float3 collected_Tw[BLOCK_SIZE];
@@ -207,6 +211,8 @@ renderCUDA(
 	float dL_dpixel[C];
 	float dL_drefl_strength;
 	float accum_refl_strength_rec = 0;
+	float dL_dior;
+	float accum_ior_rec = 0;
 
 #if RENDER_AXUTILITY
 	float dL_dreg;
@@ -245,11 +251,13 @@ renderCUDA(
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		dL_drefl_strength = dL_drefl_strength_map[pix_id];
+		dL_dior = dL_dior_map[pix_id];
 	}
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
 	float last_refl_strength = 0;
+	float last_ior = 0;
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -275,6 +283,7 @@ renderCUDA(
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 			collected_refl_strengths[block.thread_rank()] = refl_strengths[coll_id];
+			collected_iors[block.thread_rank()] = iors[coll_id];
 
 				// collected_depths[block.thread_rank()] = depths[coll_id];
 		}
@@ -353,6 +362,11 @@ renderCUDA(
 			last_refl_strength = collected_refl_strengths[j];
 			dL_dalpha += (collected_refl_strengths[j] - accum_refl_strength_rec) * dL_drefl_strength;
 			atomicAdd(&(dL_drefl_strengths[global_id]), dchannel_dcolor * dL_drefl_strength);
+
+			accum_ior_rec = last_alpha * accum_ior_rec + (1.f - last_alpha) * accum_ior_rec;
+			last_ior = collected_iors[j];
+			dL_dalpha += (collected_iors[j] - accum_ior_rec) * dL_dior;
+			atomicAdd(&(dL_diors[global_id]), dchannel_dcolor * dL_dior);
 
 			float dL_dz = 0.0f;
 			float dL_dweight = 0;
@@ -714,6 +728,7 @@ void BACKWARD::render(
 	const float4* normal_opacity,
 	const float* colors,
 	const float* refl_strengths,
+	const float* iors,
 	const float* transMats,
 	const float* depths,
 	const float* final_Ts,
@@ -721,12 +736,14 @@ void BACKWARD::render(
 	const float* dL_dpixels,
 	const float* dL_depths,
 	const float* dL_drefl_strength_map,
+	const float* dL_dior_map,
 	float * dL_dtransMat,
 	float3* dL_dmean2D,
 	float* dL_dnormal3D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_drefl_strengths)
+	float* dL_drefl_strengths,
+	float* dL_diors)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -739,17 +756,20 @@ void BACKWARD::render(
 		transMats,
 		colors,
 		refl_strengths,
+		iors,
 		depths,
 		final_Ts,
 		n_contrib,
 		dL_dpixels,
 		dL_depths,
 		dL_drefl_strength_map,
+		dL_dior_map,
 		dL_dtransMat,
 		dL_dmean2D,
 		dL_dnormal3D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_drefl_strengths
+		dL_drefl_strengths,
+		dL_diors
 		);
 }
