@@ -24,6 +24,7 @@ def rasterize_gaussians(
     sh,
     colors_precomp,
     refl_strengths,
+    iors,
     opacities,
     scales,
     rotations,
@@ -38,6 +39,7 @@ def rasterize_gaussians(
         sh,
         colors_precomp,
         refl_strengths,
+        iors,
         opacities,
         scales,
         rotations,
@@ -56,6 +58,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         sh,
         colors_precomp,
         refl_strengths,
+        iors,
         opacities,
         scales,
         rotations,
@@ -72,6 +75,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             env_scope_mask,
             colors_precomp,
             refl_strengths,
+            iors,
             img_mask,
             opacities,
             scales,
@@ -97,27 +101,27 @@ class _RasterizeGaussians(torch.autograd.Function):
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer, refl_strength_map, is_rendered = _C.rasterize_gaussians(*args)
+                num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer, refl_strength_map, ior_map, is_rendered = _C.rasterize_gaussians(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer, refl_strength_map, is_rendered = _C.rasterize_gaussians(*args)
+            num_rendered, color, depth, radii, geomBuffer, binningBuffer, imgBuffer, refl_strength_map, ior_map, is_rendered = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
-        ctx.save_for_backward(colors_precomp, refl_strengths, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
-        return color, radii, depth, refl_strength_map, is_rendered
+        ctx.save_for_backward(colors_precomp, refl_strengths, iors, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
+        return color, radii, depth, refl_strength_map, ior_map, is_rendered
 
     @staticmethod
-    def backward(ctx, grad_out_color, _, grad_depth, grad_out_strength_map, __):
+    def backward(ctx, grad_out_color, _, grad_depth, grad_out_strength_map, grad_out_ior_map, __):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
-        colors_precomp, refl_strengths, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
+        colors_precomp, refl_strengths, iors, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
 
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
@@ -125,6 +129,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 radii, 
                 colors_precomp, 
                 refl_strengths,
+                iors,
                 scales, 
                 rotations, 
                 raster_settings.scale_modifier, 
@@ -136,6 +141,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 grad_out_color,
                 grad_depth,
                 grad_out_strength_map, 
+                grad_out_ior_map,
                 sh, 
                 raster_settings.sh_degree, 
                 raster_settings.campos,
@@ -149,13 +155,13 @@ class _RasterizeGaussians(torch.autograd.Function):
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                grad_means2D, grad_colors_precomp, grad_refl_strengths, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
+                grad_means2D, grad_colors_precomp, grad_refl_strengths, grad_iors, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_bw.dump")
                 print("\nAn error occured in backward. Writing snapshot_bw.dump for debugging.\n")
                 raise ex
         else:
-             grad_means2D, grad_colors_precomp, grad_refl_strengths, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
+             grad_means2D, grad_colors_precomp, grad_refl_strengths, grad_iors, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
 
         grads = (
             grad_means3D,
@@ -163,6 +169,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_sh,
             grad_colors_precomp,
             grad_refl_strengths,
+            grad_iors,
             grad_opacities,
             grad_scales,
             grad_rotations,
@@ -206,7 +213,7 @@ class GaussianRasterizer(nn.Module):
             
         return visible
 
-    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, refl_strengths = None, scales = None, rotations = None, cov3D_precomp = None, env_scope_mask = None, img_mask = None):
+    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, refl_strengths = None, iors = None, scales = None, rotations = None, cov3D_precomp = None, env_scope_mask = None, img_mask = None):
         
         raster_settings = self.raster_settings
 
@@ -242,6 +249,7 @@ class GaussianRasterizer(nn.Module):
             shs,
             colors_precomp,
             refl_strengths,
+            iors,
             opacities,
             scales, 
             rotations,

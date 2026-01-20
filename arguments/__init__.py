@@ -106,10 +106,12 @@ class OptimizationParams(ParamGroup):
         self.envmap_cubemap_lr = 0.05
         self.refl_init_value = 1e-2
         self.lambda_refl_smooth = 0.4
+        self.ior_lr = 0.001
+        self.ior_init_value = 1.1
         self.init_until_iter = 500
         self.feature_rest_from_iter = 7_000
         self.opac_lr0_interval = 200
-        self.densification_interval_when_prop = 500
+        self.densification_interval_when_prop = 100
         self.longer_prop_iter = 0
 
         self.use_env_scope = False

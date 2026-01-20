@@ -270,6 +270,7 @@ renderCUDA(
 	const bool* __restrict__ env_scope_mask,
 	const float* __restrict__ features,
 	const float* __restrict__ refl_stengths,
+	const float* __restrict__ iors,
 	const float* __restrict__ img_mask,
 	const float* __restrict__ transMats,
 	const float* __restrict__ depths,
@@ -280,6 +281,7 @@ renderCUDA(
 	float* __restrict__ out_color,
 	float* __restrict__ out_others,
 	float* __restrict__ out_refl_strength_map,
+	float* __restrict__ out_ior_map,
 	int* __restrict__ is_rendered)
 {
 	// Identify current tile and associated min/max pixel range.
@@ -315,6 +317,7 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 	float refl_strength = 0.0f;
+	float ior = 0.0f;
 	float mask = 0.0f;
 #if RENDER_AXUTILITY
 	float counter = 0.0f;
@@ -442,6 +445,7 @@ renderCUDA(
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
 			refl_strength += refl_stengths[collected_id[j]] * w;
+			ior += iors[collected_id[j]] * w;
 
 			if (env_scope_mask[collected_id[j]])
 				mask = 1.0f;
@@ -457,7 +461,7 @@ renderCUDA(
 #endif
 
 			// mark Gaussians that contribute to image
-			if (!apply_mask || img_mask[H * W + pix_id] == 1.0)
+			if (!apply_mask || img_mask[H * W + pix_id] > 0.5)
 				atomicExch(&is_rendered[collected_id[j]], 1);
 		}
 	}
@@ -471,6 +475,7 @@ renderCUDA(
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		out_refl_strength_map[pix_id] = refl_strength;
+		out_ior_map[pix_id] = ior + T * 1.0f; // assume air ior = 1.0f
 
 #if RENDER_AXUTILITY
 		n_contrib[pix_id + H * W] = median_contributor;
@@ -504,6 +509,7 @@ void FORWARD::render(
 	const bool* env_scope_mask,
 	const float* colors,
 	const float* refl_strengths,
+	const float* iors,
 	const float* img_mask,
 	const float* transMats,
 	const float* depths,
@@ -514,6 +520,7 @@ void FORWARD::render(
 	float* out_color,
 	float* out_others,
 	float* out_refl_strength_map,
+	float* out_ior_map,
 	int* is_rendered)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
@@ -529,6 +536,7 @@ void FORWARD::render(
 		env_scope_mask,
 		colors,
 		refl_strengths,
+		iors,
 		img_mask,
 		transMats,
 		depths,
@@ -539,6 +547,7 @@ void FORWARD::render(
 		out_color,
 		out_others,
 		out_refl_strength_map,
+		out_ior_map,
 		is_rendered);
 }
 

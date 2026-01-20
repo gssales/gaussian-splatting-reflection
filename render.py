@@ -46,7 +46,7 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pip
     visible_gaussians_ = torch.zeros_like(gaussians.get_opacity)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        render_pkg = render(view, gaussians, pipeline, background)
+        render_pkg = render(view, gaussians, pipeline, background, initial_stage=False, third_stage=True)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         gt = view.original_image[0:3, :, :]
 
