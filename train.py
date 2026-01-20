@@ -593,7 +593,7 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    testing_iterations = [i for i in range(5000, args.iterations+1, 5000)]
+    testing_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+args.longer_prop_iter+1, 5000)]
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
