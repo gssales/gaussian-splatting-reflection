@@ -3,21 +3,23 @@ import os
 from argparse import ArgumentParser
 import json
 
-ref_real_scenes = ["ref_real/gardenspheres", "ref_real/sedan", "ref_real/toycar"]
-shiny_blender_scenes = ["shiny_blender/ball","shiny_blender/car","shiny_blender/coffee","shiny_blender/helmet","shiny_blender/teapot","shiny_blender/toaster"]
-nerf_synthetic_scenes = ["nerf_synthetic/chair","nerf_synthetic/drums","nerf_synthetic/ficus","nerf_synthetic/hotdog","nerf_synthetic/lego","nerf_synthetic/materials","nerf_synthetic/mic","nerf_synthetic/ship"]
-glossy_synthetic_scenes = ["GlossySynthetic/angel","GlossySynthetic/bell","GlossySynthetic/cat","GlossySynthetic/horse","GlossySynthetic/luyu","GlossySynthetic/potion","GlossySynthetic/tbell","GlossySynthetic/teapot"]
+# ref_real_scenes = ["ref_real/gardenspheres", "ref_real/sedan", "ref_real/toycar"]
+# shiny_blender_scenes = ["shiny_blender/ball","shiny_blender/car","shiny_blender/coffee","shiny_blender/helmet","shiny_blender/teapot","shiny_blender/toaster"]
+# nerf_synthetic_scenes = ["nerf_synthetic/chair","nerf_synthetic/drums","nerf_synthetic/ficus","nerf_synthetic/hotdog","nerf_synthetic/lego","nerf_synthetic/materials","nerf_synthetic/mic","nerf_synthetic/ship"]
+# glossy_synthetic_scenes = ["GlossySynthetic/angel","GlossySynthetic/bell","GlossySynthetic/cat","GlossySynthetic/horse","GlossySynthetic/luyu","GlossySynthetic/potion","GlossySynthetic/tbell","GlossySynthetic/teapot"]
+# materials_scenes = ["materials2/mirror2", "materials2/metal2", "materials2/glossy2", "materials2/black2", "materials2/white2"]
+# materials_scenes = ["materials_sparse/mirror", "materials_sparse/metal", "materials_sparse/glossy", "materials_sparse/diffuse", "materials_sparse/black", "materials_sparse/white", "materials_sparse/far", "materials_sparse/cube_mirror", "materials_sparse/cube_metal", "materials_sparse/cube_glossy", "materials_sparse/cube_diffuse",
+#   "materials_sparse/mirror_sky", "materials_sparse/metal_sky", "materials_sparse/glossy_sky", "materials_sparse/black_sky", "materials_sparse/white_sky",
+#   "materials_sparse/mirror_const_env", "materials_sparse/metal_const_env", "materials_sparse/glossy_const_env"]
+materials_scenes = ["materials_regular/black", "materials_regular/white", "materials_regular/diffuse", "materials_regular/glossy", "materials_regular/metal", "materials_regular/mirror"]
 
 parser = ArgumentParser(description="Full evaluation script parameters")
-parser.add_argument("--output_path", default="/mnt/output/ours/eval")
+parser.add_argument("--output_path", default="E:\\output\\3dgs-dr\\eval")
 
 args, _ = parser.parse_known_args()
 
 all_scenes = []
-all_scenes.extend(ref_real_scenes)
-all_scenes.extend(shiny_blender_scenes)
-all_scenes.extend(nerf_synthetic_scenes)
-all_scenes.extend(glossy_synthetic_scenes)
+all_scenes.extend(materials_scenes)
 
 metrics = {}
 
@@ -37,7 +39,7 @@ for scene in all_scenes:
   for key in results.keys():
     if key > max_key:
       max_key = key
-  max_key = "ref_gs_30000"
+  # max_key = "ref_gs_30000"
 
   # timings_path = os.path.join(args.output_path, 'timing.json')
   # with open(timings_path, 'r') as fp:

@@ -70,7 +70,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
-        apply_mask=False,
+        apply_mask=apply_mask,
         slice=False
     )
 
@@ -185,6 +185,9 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
     surf_normal = surf_normal.permute(2,0,1)
     # remember to multiply with accum_alpha since render_normal is unnormalized.
     surf_normal = surf_normal * (render_alpha).detach()
+    
+    render_normal = render_normal.permute(1,2,0)
+    render_normal = render_normal / (torch.norm(render_normal, dim=-1, keepdim=True)+1e-6)
 
     if initial_stage:
         # base_color = base_color.clamp(0,1)
@@ -194,7 +197,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             "visibility_filter" : radii > 0,
             "radii": radii,
             'rend_alpha': render_alpha,
-            'rend_normal': render_normal,
+            'rend_normal': render_normal.permute(2,0,1),
             'rend_dist': render_dist,
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
@@ -214,7 +217,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             "visibility_filter" : radii > 0,
             "radii": radii,
             'rend_alpha': render_alpha,
-            'rend_normal': render_normal,
+            'rend_normal': render_normal.permute(2,0,1),
             'rend_dist': render_dist,
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,

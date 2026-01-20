@@ -17,7 +17,16 @@ def mse(img1, img2):
     return (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
 
 def psnr(img1, img2):
+    # [ B, C, H, W ] -> [ B, 1 ]
     mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
+    return 20 * torch.log10(1.0 / torch.sqrt(mse))
+
+def psnr_map(img1, img2):
+    # 
+    # [ B, C, H, W ] -> [ B, 1, H, W ] -> mean per pixel
+    mse = torch.mean(((img1 - img2)) ** 2, dim=1, keepdim=True)
+    return 20 * torch.log10(1.0 / torch.sqrt(mse))
+    mse = (((img1 - img2)) ** 2) #.view(img1.shape[0], img1.shape[1], -1).mean(2, keepdim=True)
     return 20 * torch.log10(1.0 / torch.sqrt(mse))
 
 def gradient_map(image):
@@ -35,7 +44,7 @@ def colormap(map, cmap="turbo"):
     colors = torch.tensor(plt.cm.get_cmap(cmap).colors).to(map.device)
     map = (map - map.min()) / (map.max() - map.min())
     map = (map * 255).round().long().squeeze()
-    map = colors[map].permute(2,0,1)
+    # map = colors[map].permute(2,0,1)
     return map
 
 def render_net_image(render_pkg, render_items, render_mode, camera):
@@ -68,3 +77,60 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
     if net_image.shape[0]==1:
         net_image = colormap(net_image)
     return net_image
+
+def to_3ch(t: torch.Tensor) -> torch.Tensor:
+    """
+    Normalize various image-like tensor shapes to (B, 3, H, W) on CPU.
+    Accepted inputs:
+    (H, W)
+    (C, H, W)
+    (H, W, C)
+    (B, C, H, W)
+    (B, H, W, C)
+    (1, H, W)
+    """
+    if t is None:
+        return None
+
+    t = t.detach().cpu()
+
+    if t.dim() == 2:
+        # (H, W)
+        t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
+
+    elif t.dim() == 3:
+        # Could be (C,H,W) or (H,W,C)
+        if t.shape[0] in (1, 3):
+            # (C,H,W)
+            t = t.unsqueeze(0)  # (1,C,H,W)
+        elif t.shape[2] in (1, 3):
+            # (H,W,C)
+            t = t.permute(2, 0, 1).unsqueeze(0)  # (1,C,H,W)
+        else:
+            # Ambiguous, treat as single-channel
+            t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
+
+    elif t.dim() == 4:
+        # Could be (B,C,H,W) or (B,H,W,C)
+        if t.shape[1] in (1, 3):
+            # already (B,C,H,W)
+            pass
+        elif t.shape[-1] in (1, 3):
+            # (B,H,W,C)
+            t = t.permute(0, 3, 1, 2)  # (B,C,H,W)
+        else:
+            # Ambiguous, assume second dim is channel
+            # but keep shape, we'll just repeat later if needed
+            pass
+    else:
+        raise ValueError(f"Unsupported tensor dim {t.dim()} for image-like data")
+
+    # Ensure 3 channels
+    if t.shape[1] == 1:
+        t = t.repeat(1, 3, 1, 1)
+    elif t.shape[1] != 3:
+        # In weird cases, just squeeze to one channel and repeat
+        t = t.mean(dim=1, keepdim=True)  # (B,1,H,W)
+        t = t.repeat(1, 3, 1, 1)
+
+    return t

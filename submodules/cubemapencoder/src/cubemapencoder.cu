@@ -464,7 +464,7 @@ void cubemap_encode_forward(
 				B,C,L				
 			);
 		}
-        else{
+    else{
 			// bilinear
 			if (seamless == 0){
 				Cubemap_Bilinear_Kernel<scalar_t><<<blocks, threads>>>(

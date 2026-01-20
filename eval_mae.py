@@ -1,3 +1,4 @@
+from pathlib import Path
 import numpy as np
 import os, sys
 import tqdm
@@ -36,13 +37,14 @@ def compute_mae(pred, gt, eps=1e-8):
   return np.mean(ang_deg[valid])
 
 def compute_mean_angular_error(render_path, gt_path):
-  gt_normals, alphas = readGTImages(gt_path)
+  gt_normals, gt_image_names, alphas = readGTImages(gt_path)
 
   for method in os.listdir(render_path):
     print(method)
-    render_normals, image_names = readImages(f"{render_path}/{method}")
+    render_normals, image_names = readImages(render_path / method)
     total_mae = 0.0
     for idx in range(len(render_normals)):
+      print(image_names[idx], gt_image_names[idx])
       alpha = alphas[idx]
       normal = render_normals[idx][alpha > 0]
       normal = (normal-0.5)*2
@@ -66,25 +68,34 @@ def compute_mean_angular_error(render_path, gt_path):
 def readImages(renders_dir):
   renders = []
   image_names = []
-  for fname in os.listdir(renders_dir):
-    render = cv2.imread(os.path.join(renders_dir, fname), cv2.IMREAD_UNCHANGED)
+  for fname in os.listdir(renders_dir / "normals"):
+    render = cv2.imread(str(renders_dir / "normals" / fname), cv2.IMREAD_UNCHANGED)
+    print(render.min(), render.max())
+    # append numpy array of shape (H,W,3)
     renders.append(render)
+    # renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
     image_names.append(fname)
   return renders, image_names
 
 def readGTImages(gt_dir):
   images = []
+  images_names = []
   alphas = []
-  for index in range(200):
-    image = cv2.imread(os.path.join(gt_dir, f"r_{index}_normal.png"), cv2.IMREAD_UNCHANGED)[..., :3]
-    try:
-      alpha = cv2.imread(os.path.join(gt_dir, f"r_{index}.png"), cv2.IMREAD_UNCHANGED)[..., 3] / 255.0
-    except:
-      alpha = cv2.imread(os.path.join(gt_dir, f"r_{index}_alpha.png"), cv2.IMREAD_UNCHANGED) / 255.0
-    images.append(image)
-    alphas.append(alpha)
-
-  return images, alphas
+  for fname in os.listdir(gt_dir):
+    if fname.endswith("_normal.png"):
+      normal = cv2.imread(str(gt_dir / fname), cv2.IMREAD_UNCHANGED)[..., :3]
+      print(normal.min(), normal.max())
+      images.append(normal)
+      images_names.append(fname)
+    
+    if fname.endswith("_alpha.png"):
+      alpha = cv2.imread(str(gt_dir / fname), cv2.IMREAD_UNCHANGED)[..., 3] / 255.0
+      # should shape like [1,1,H,W]
+      alphas.append(alpha)
+    elif not fname.endswith("_normal.png") and not fname.endswith("_alpha.png"):
+      rgba_image = cv2.imread(str(gt_dir / fname), cv2.IMREAD_UNCHANGED)[..., :3] / 255.0
+      alphas.append(rgba_image)
+  return images, images_names, alphas
 
 
 if __name__ == "__main__":
@@ -96,4 +107,4 @@ if __name__ == "__main__":
   cmdlne_string = sys.argv[1:]
   args = parser.parse_args(cmdlne_string)
 
-  compute_mean_angular_error(args.render_path, args.gt_path)
+  compute_mean_angular_error(Path(args.render_path), Path(args.gt_path))
