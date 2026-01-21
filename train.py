@@ -50,9 +50,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     tb_writer = prepare_output_and_logger(dataset)
 
     densify_until_iteration = opt.densify_until_iter + opt.longer_prop_iter
-    if opt.normal_propagation:
+    if not opt.disable_normal_propagation:
         normal_prop_until_iter = opt.normal_prop_until_iter + opt.longer_prop_iter
-    if opt.color_sabotage:
+    if not opt.disable_color_sabotage:
         color_sabotage_until_iter = opt.color_sabotage_until_iter + opt.longer_prop_iter
     
     if opt.use_env_scope:
