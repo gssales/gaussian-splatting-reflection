@@ -152,7 +152,7 @@ def evaluate(model_path, args):
                     
                     #using mean and std to normalize angular error map
                     # angular_error[angular_error > mean_angular_error] = 0.0
-                    normalized_angular_error = (angular_error) / (mean_angular_error+ std_angular_error)
+                    normalized_angular_error = (angular_error - mean_angular_error) / (std_angular_error + 1e-8)
                     # normalized_angular_error = (angular_error-min_angular_error-std_angular_error/2.0) / (std_angular_error/2.0)
                     normalized_angular_error[normalized_angular_error > 1.0] = 1.0
                     # angular_error = (angular_error - angular_error.min()) / (angular_error.max() - angular_error.min() + 1e-8)

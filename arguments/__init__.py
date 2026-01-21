@@ -56,7 +56,6 @@ class ModelParams(ParamGroup):
         self._images = "images"
         self._resolution = -1
         self._white_background = False
-        self.random_background_color = False
         self.cubemap_resol = 128
         self.data_device = "cuda"
         self.eval = False
@@ -78,7 +77,6 @@ class PipelineParams(ParamGroup):
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
-        self.synthetic = False
         self.iterations = 31_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
@@ -104,32 +102,33 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         
-        self.refl_lr = 0.006 # TODO
-        self.envmap_cubemap_lr = 0.05 # TODO
-        self.refl_init_value = 1e-2 # TODO
-        self.lambda_refl_smooth = 0.4 # TODO
-        self.init_until_iter = 500 # TODO
-        self.feature_rest_from_iter = 7_000 # TODO
-        self.opac_lr0_interval = 200 # TODO
-        self.densification_interval_when_prop = 100 # TODO
-        self.longer_prop_iter = 0 # TODO
+        self.refl_lr = 0.006
+        self.envmap_cubemap_lr = 0.05
+        self.refl_init_value = 1e-2
+        self.lambda_refl_smooth = 0.4
+        self.init_until_iter = 500
+        self.feature_rest_from_iter = 7_000
+        self.opac_lr0_interval = 200
+        self.densification_interval_when_prop = 500
+        self.longer_prop_iter = 0
 
-        self.use_env_scope = False # TODO
-        self.env_scope_center = [0.,0.,0.] # TODO
-        self.env_scope_radius = 0.0 # TODO
+        self.use_env_scope = False
+        self.env_scope_center = [0.,0.,0.]
+        self.env_scope_radius = 0.0
 
-        self.use_alpha_mask = False # TODO
+        self.use_alpha_mask = False
+        self.random_background_color = False
 
         self.normal_prop_interval = 1000
-        self.normal_prop_until_iter = 24_000 # TODO
+        self.normal_prop_until_iter = 24_000
         
         self.color_sabotage_interval = 1000
-        self.color_sabotage_until_iter = 24_000 # TODO
+        self.color_sabotage_until_iter = 24_000
 
-        self.color_sabotage = False # TODO
-        self.normal_propagation = False # TODO
-        self.disable_depth_distortion_loss = False # TODO
-        self.disable_normal_consistentcy_loss = False # TODO
+        self.disable_color_sabotage = False 
+        self.disable_normal_propagation = False 
+        self.disable_depth_distortion_loss = False 
+        self.disable_normal_consistentcy_loss = False 
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

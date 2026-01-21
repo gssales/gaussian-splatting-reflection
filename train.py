@@ -25,7 +25,12 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import traceback
 import torchvision
 from torchvision.utils import make_grid, save_image
+from utils.general_utils import colormap  # used repeatedly
+from utils.image_utils import colormap as img_colormap  # different colormap function
+from utils.image_utils import to_3ch
 try:
+    import warnings
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
@@ -37,14 +42,13 @@ try:
 except:
     FUSED_SSIM_AVAILABLE = False
 
-def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
+def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, progress_iterations):
 
     view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "Normal", "Refl. Color", "Edge", "Curvature", "Mask"]
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
 
-    total_iterations = opt.iterations + opt.longer_prop_iter + 1
     densify_until_iteration = opt.densify_until_iter + opt.longer_prop_iter
     if opt.normal_propagation:
         normal_prop_until_iter = opt.normal_prop_until_iter + opt.longer_prop_iter
@@ -76,11 +80,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
 
-    print('densify until: {}'.format(densify_until_iteration))
-    print('total iter: {}'.format(total_iterations))
-    progress_bar = tqdm(range(first_iter, total_iterations-1), desc="Training progress")
+    print('Total Iterations: {}'.format(opt.iterations))
+    print('Densify until: {}'.format(densify_until_iteration))
+    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, total_iterations):
+    for iteration in range(first_iter, opt.iterations+1):
 
         iter_start.record()
 
@@ -99,7 +103,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
         vind = viewpoint_indices.pop(rand_idx)
 
-        if dataset.random_background_color:
+        if opt.random_background_color:
             background = torch.rand(3, dtype=torch.float32, device="cuda")
 
         # Render
@@ -111,7 +115,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         gt_image = viewpoint_cam.original_image.cuda()
         gt_alpha_mask = viewpoint_cam.gt_alpha_mask
 
-        # if opt.use_alpha_mask:
         image = image * alpha + (1-alpha) * background[:, None, None]
         if gt_alpha_mask is not None:
             gt_alpha_mask = gt_alpha_mask.cuda()
@@ -123,10 +126,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         else:
             ssim_value = ssim(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
-        
-        # in synthetic scenes, forces gaussian of the same color as the background to be transparent
-        if opt.use_alpha_mask and gt_alpha_mask is not None:
-            loss += 0.75 * l1_loss(alpha, gt_alpha_mask)
 
         def get_outside_msk():
             return None if not opt.use_env_scope else \
@@ -176,13 +175,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
-                    "distort": f"{ema_dist_for_log:.{5}f}",
-                    "normal": f"{ema_normal_for_log:.{5}f}",
+                    # "distort": f"{ema_dist_for_log:.{5}f}",
+                    "Normal": f"{ema_normal_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
                 }
                 progress_bar.set_postfix(loss_dict)
                 progress_bar.update(10)
-            if iteration == total_iterations-1:
+            if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
@@ -193,7 +192,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'total_loss': loss.item()
             }
             bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), dataset.model_path)
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
@@ -209,7 +208,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
             #     gaussians.filter_env_map()
 
-            if (iteration in saving_iterations or iteration == total_iterations-1):
+            if (iteration in saving_iterations or iteration == opt.iterations-1):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
@@ -219,7 +218,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if opt.normal_propagation and (opt.init_until_iter < iteration <= normal_prop_until_iter):
+                if not opt.disable_normal_propagation and (opt.init_until_iter < iteration <= normal_prop_until_iter):
                     densification_interval = opt.densification_interval_when_prop
                 else:
                     densification_interval = opt.densification_interval
@@ -236,7 +235,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     gaussians.set_opacity_lr(opt.opacity_lr)
 
                 if (iteration-500) % opt.normal_prop_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter):
-                    if not opacity_reset_0 and opt.normal_propagation:
+                    if not opacity_reset_0 and opt.disable_normal_propagation:
                         outside_msk = get_outside_msk()
                         opacity_old = gaussians.get_opacity
                         opac_mask = (opacity_old > 0.9).flatten()
@@ -252,11 +251,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
                         gaussians.reset_refl()
                         
-                        if opt.opac_lr0_interval > 0 and iteration != opt.normal_prop_until_iter:
+                        if opt.opac_lr0_interval > 0 and iteration != normal_prop_until_iter:
                             gaussians.set_opacity_lr(0.0)
 
                 if (iteration-500) % opt.color_sabotage_interval == 0 and (opt.init_until_iter < iteration <= color_sabotage_until_iter):
-                    if opt.color_sabotage:
+                    if not opt.disable_color_sabotage:
                         refl = gaussians.get_refl
                         color_mask = (refl > 0.1).flatten()                        
                         outside_msk = get_outside_msk()
@@ -265,14 +264,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                         gaussians.dist_color(exclusive_msk=color_mask)
 
             # Optimizer step
-            if iteration < total_iterations-1:
+            if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
-
 
             if network_gui.conn == None:
                 network_gui.try_connect(view_render_options)
@@ -324,82 +322,34 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 @torch.no_grad()
-def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs,
-    model_path,  # <-- NEW: to get dataset.model_path
+def training_report(
+    tb_writer, 
+    iteration,
+    train_loss_report, 
+    l1_loss, 
+    elapsed,
+    testing_iterations,
+    progress_iterations, 
+    scene : Scene, 
+    renderFunc, 
+    renderArgs,
+    bg,
+    initial_stage,
+    model_path,
 ):
     if tb_writer:
         for tag,loss in train_loss_report.items():
             tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
         tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+        tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
 
-    # Report test and samples of training set
-    if iteration in testing_iterations:
+    if iteration in progress_iterations:
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, len(scene.getTrainCameras()), 5)]})
 
-        from utils.general_utils import colormap  # used repeatedly
-        from utils.image_utils import colormap as img_colormap  # different colormap function
-
-        def to_3ch(t: torch.Tensor) -> torch.Tensor:
-            """
-            Normalize various image-like tensor shapes to (B, 3, H, W) on CPU.
-            Accepted inputs:
-            (H, W)
-            (C, H, W)
-            (H, W, C)
-            (B, C, H, W)
-            (B, H, W, C)
-            (1, H, W)
-            """
-            if t is None:
-                return None
-
-            t = t.detach().cpu()
-
-            if t.dim() == 2:
-                # (H, W)
-                t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
-
-            elif t.dim() == 3:
-                # Could be (C,H,W) or (H,W,C)
-                if t.shape[0] in (1, 3):
-                    # (C,H,W)
-                    t = t.unsqueeze(0)  # (1,C,H,W)
-                elif t.shape[2] in (1, 3):
-                    # (H,W,C)
-                    t = t.permute(2, 0, 1).unsqueeze(0)  # (1,C,H,W)
-                else:
-                    # Ambiguous, treat as single-channel
-                    t = t.unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
-
-            elif t.dim() == 4:
-                # Could be (B,C,H,W) or (B,H,W,C)
-                if t.shape[1] in (1, 3):
-                    # already (B,C,H,W)
-                    pass
-                elif t.shape[-1] in (1, 3):
-                    # (B,H,W,C)
-                    t = t.permute(0, 3, 1, 2)  # (B,C,H,W)
-                else:
-                    # Ambiguous, assume second dim is channel
-                    # but keep shape, we'll just repeat later if needed
-                    pass
-            else:
-                raise ValueError(f"Unsupported tensor dim {t.dim()} for image-like data")
-
-            # Ensure 3 channels
-            if t.shape[1] == 1:
-                t = t.repeat(1, 3, 1, 1)
-            elif t.shape[1] != 3:
-                # In weird cases, just squeeze to one channel and repeat
-                t = t.mean(dim=1, keepdim=True)  # (B,1,H,W)
-                t = t.repeat(1, 3, 1, 1)
-
-            return t
-
-
+        torch.cuda.empty_cache()
         for config in validation_configs:
             config_name = config['name']
             if config['cameras'] and len(config['cameras']) > 0:
@@ -407,16 +357,99 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                 # base folder: dataset.model_path/progress/{train|test}
                 base_save_dir = os.path.join(model_path, 'progress', config_name)
                 os.makedirs(base_save_dir, exist_ok=True)
+                
+                for idx, viewpoint in enumerate(config['cameras']):
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
+                    image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
+                    alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
+                    base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
+                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+
+                    image = image * alpha + (1-alpha) * bg[:, None, None]
+                    if gt_alpha_mask is not None:
+                        gt_alpha_mask = gt_alpha_mask.cuda()
+                        gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
+
+                    # ---- Save grid per camera (by attributes) ----
+                    if base_save_dir is not None:
+                        tiles = []
+
+                        tiles.append(to_3ch(gt_image))
+                        tiles.append(to_3ch(image))
+                        tiles.append(to_3ch(base_color))
+
+                        try:
+                            depth = render_pkg["surf_depth"]     
+                            norm = depth.max().clamp(min=1e-8)
+                            depth_norm = depth / norm   
+
+                            # Convert to (H,W) for colormap
+                            depth_color = img_colormap(depth_norm, cmap='turbo') 
+                            tiles.append(to_3ch(depth_color))
+                        except Exception as e:
+                            print(e)
+                            traceback.print_exc()
+
+                        try:
+                            if "rend_normal" in render_pkg:
+                                rn = render_pkg["rend_normal"] * 0.5 + 0.5   # usually (1,3,H,W)
+                                tiles.append(to_3ch(rn))
+
+                            if "surf_normal" in render_pkg:
+                                sn = render_pkg["surf_normal"] * 0.5 + 0.5
+                                tiles.append(to_3ch(sn))
+
+                            if "refl_strength_map" in render_pkg:
+                                rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
+                                tiles.append(to_3ch(rm))
+                        except Exception:
+                            pass
+
+                        # avoid saving very large images/grids
+                        if gt_image.shape[2] > 512 or gt_image.shape[1] > 512:
+                            large_dim = max(gt_image.shape[1], gt_image.shape[2])
+                            scale_factor = 512 / large_dim
+                            dimens = (int(gt_image.shape[1] * scale_factor), int(gt_image.shape[2] * scale_factor))
+                            for i in range(len(tiles)):
+                                tiles[i] = torchvision.transforms.functional.resize(tiles[i], dimens, interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
+
+                        tiles = [t for t in tiles if t is not None]
+                        if len(tiles) > 0:
+                            cat = torch.cat(tiles, dim=0)  # (N,3,H,W) – now safe
+                            grid = make_grid(cat, nrow=3, padding=2)
+
+                            img_name = f"{config_name}_{idx:03d}_{iteration}.png"
+                            save_path = os.path.join(base_save_dir, img_name)
+                            save_image(grid, save_path)
+
+    # Report test and samples of training set
+    if iteration in testing_iterations:
+        torch.cuda.empty_cache()
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, len(scene.getTrainCameras()), 5)]})
+
+
+        for config in validation_configs:
+            config_name = config['name']
+            if config['cameras'] and len(config['cameras']) > 0:
 
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=False, *renderArgs)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
+                    alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
 
-                    # ---- TensorBoard logging (unchanged, except minor refactor) ----
+                    image = image * alpha + (1-alpha) * bg[:, None, None]
+                    if gt_alpha_mask is not None:
+                        gt_alpha_mask = gt_alpha_mask.cuda()
+                        gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
+
+                    # ---- TensorBoard logging ----
                     if tb_writer and (idx < 5):
                         depth = render_pkg["surf_depth"]
                         norm = depth.max()
@@ -460,19 +493,6 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                                 refl_map[None],
                                 global_step=iteration,
                             )
-
-                            rend_dist = render_pkg["rend_dist"]
-                            rend_dist = colormap(rend_dist.cpu().numpy()[0])
-                            rend_dist_color_t = (
-                                rend_dist.permute(2, 0, 1)
-                                .unsqueeze(0)
-                                .float()
-                            )
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/rend_dist",
-                                rend_dist[None],
-                                global_step=iteration,
-                            )
                         except Exception:
                             pass
 
@@ -486,67 +506,6 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                     # ---- Metrics ----
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
-
-                    # ---- Save grid per camera (by attributes) ----
-                    if base_save_dir is not None:
-                        tiles = []
-
-                        # 1) Ground truth (B,C,H,W)
-                        tiles.append(to_3ch(gt_image))
-
-                        # 2) Render (B,C,H,W)
-                        tiles.append(to_3ch(image))
-                        tiles.append(to_3ch(base_color))
-
-                        # 3) Depth (colored)
-                        try:
-                            depth = render_pkg["surf_depth"]          # possible shapes: (1,1,H,W) or (1,H,W)
-                            norm = depth.max().clamp(min=1e-8)
-                            depth_norm = depth / norm                 # same shape as depth
-
-                            # Convert to (H,W) for colormap
-                            # depth_np = depth_norm.squeeze().cpu().numpy()  # (H,W)
-                            depth_color = img_colormap(depth_norm, cmap='turbo') # (H,W,3)
-                            # depth_t = torch.from_numpy(depth_color).float()  # (H,W,3)
-                            tiles.append(to_3ch(depth_color))
-                        except Exception as e:
-                            print(e)
-                            traceback.print_exc()
-
-                        # 4) Other attributes if present
-                        try:
-                            if "rend_normal" in render_pkg:
-                                rn = render_pkg["rend_normal"] * 0.5 + 0.5   # usually (1,3,H,W)
-                                tiles.append(to_3ch(rn))
-
-                            if "surf_normal" in render_pkg:
-                                sn = render_pkg["surf_normal"] * 0.5 + 0.5
-                                tiles.append(to_3ch(sn))
-
-                            if "refl_strength_map" in render_pkg:
-                                rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
-                                tiles.append(to_3ch(rm))
-
-                            # if "rend_dist" in render_pkg:
-                            #     rd = render_pkg["rend_dist"]                 # (1,1,H,W) or (1,H,W)
-                            #     # rd_np = rd.squeeze().cpu().numpy()           # (H,W)
-                            #     rd_color = img_colormap(rd)                   # (H,W,3)
-                            #     tiles.append(to_3ch(rd_color))
-                        except Exception:
-                            pass
-
-                        tiles = [t for t in tiles if t is not None]
-                        if len(tiles) > 0:
-                            cat = torch.cat(tiles, dim=0)  # (N,3,H,W) – now safe
-                            grid = make_grid(
-                                cat,
-                                nrow=3,  # all attributes in one row for this camera
-                                padding=2,
-                            )
-
-                            img_name = f"{config_name}_{idx:03d}_{iteration}.png"
-                            save_path = os.path.join(base_save_dir, img_name)
-                            save_image(grid, save_path)
 
 
             # ---- Average metrics per config ----
@@ -566,8 +525,7 @@ def training_report(tb_writer, iteration, train_loss_report, l1_loss, elapsed, t
                 )
 
         if tb_writer:
-            tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-            tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+            tb_writer.flush()
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
@@ -593,13 +551,13 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    testing_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+args.longer_prop_iter+1, 5000)]
+    progress_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
         network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), testing_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, progress_iterations)
 
     # All done
     print("\nTraining complete.")

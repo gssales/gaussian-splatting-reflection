@@ -70,7 +70,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=False,
-        apply_mask=apply_mask,
+        apply_mask=False,
         slice=False
     )
 
@@ -204,9 +204,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'env_scope_mask': mask
         }
     else:
-        n_map = render_normal.permute(1,2,0)
-        n_map = n_map / (torch.norm(n_map, dim=-1, keepdim=True)+1e-6)
-        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, n_map)
+        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
 
         final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
         # final_image = final_image.clamp(0, 1)
