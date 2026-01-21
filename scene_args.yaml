@@ -1,0 +1,26 @@
+data:
+  realDatasets:
+    - ref_real
+    - envgs
+  syntheticDatasets:
+    - shiny_blender
+    - GlossySynthetic
+    - nerf_synthetic
+real: 
+  train: " --init_until_iter 3000 --use_env_scope --iterations 70000 --longer_prop_iter 15000"
+  render: " --iteration 70000"
+synthetic: 
+  train: " -w --random_background_color"
+  render: " --iteration 30000"
+args:
+  ref_real/sedan: " -r 8 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138"
+  ref_real/gardenspheres: " -r 6 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974"
+  ref_real/toycar: " -r 4 --env_scope_center 0.486 1.108 3.72 --env_scope_radius 2.507"
+  shiny_blender/ball: " --init_until_iter 20 "
+  shiny_blender/helmet: " --init_until_iter 0 "
+  GlossySynthetic/angel: " --init_until_iter 20 "
+  GlossySynthetic/horse: " --init_until_iter 20 "
+  GlossySynthetic/potion: " --init_until_iter 20 "
+  GlossySynthetic/tbell: " --init_until_iter 20 "
+render:
+  - 
