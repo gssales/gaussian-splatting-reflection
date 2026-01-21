@@ -28,29 +28,29 @@ parser.add_argument("--output_path", default="/mnt/output/ours/eval")
 
 extra_args = {
     "ref_real/sedan": " -r 8 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138 --iterations 55000 --longer_prop_iter 15000 --refl_init_value 1e-1",
-    "ref_real/gardenspheres": " -r 4 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974 --iterations 50000 --longer_prop_iter 10000",
+    "ref_real/gardenspheres": " -r 6 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974 --iterations 50000 --longer_prop_iter 10000",
     "ref_real/toycar": " -r 4 --env_scope_center 0.486 1.108 3.72 --env_scope_radius 2.507 --iterations 55000 --longer_prop_iter 15000",
     "shiny_blender/ball": " -w --init_until_iter 0 --synthetic",
     "shiny_blender/car": " -w --opacity_reset_interval 1000 --synthetic",
     "shiny_blender/coffee": " -w --init_until_iter 3000 --synthetic  --densification_interval_when_prop 500",
-    "shiny_blender/helmet": " -w --init_until_iter 0",
+    "shiny_blender/helmet": " -w --init_until_iter 0 --synthetic",
     "shiny_blender/teapot": " -w --opacity_reset_interval 1000 --synthetic",
-    "shiny_blender/toaster": " -w --opacity_reset_interval 1000 --synthetic",
+    "shiny_blender/toaster": " --opacity_reset_interval 1000 --synthetic --refl_init_value 1e-3",
     "GlossySynthetic/angel": " -w --init_until_iter 20 --synthetic --densification_interval_when_prop 500",
     "GlossySynthetic/bell": " -w --opacity_reset_interval 1000 --synthetic",
     "GlossySynthetic/cat": " -w --opacity_reset_interval 1000 --synthetic",
     "GlossySynthetic/horse": " -w --init_until_iter 20 --synthetic --densification_interval_when_prop 500",
     "GlossySynthetic/luyu": " -w --opacity_reset_interval 1000 --synthetic",
     "GlossySynthetic/potion": " -w --init_until_iter 20 --synthetic",
-    "GlossySynthetic/tbell": " -w --init_until_iter 20 --synthetic",
+    "GlossySynthetic/tbell": " -w --init_until_iter 20 --synthetic --refl_init_value 1e-3",
     "GlossySynthetic/teapot": " -w --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/chair": " -w --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/drums": " -w --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/ficus": " -w --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/hotdog": " -w --opacity_reset_interval 1000 --synthetic",
-    "nerf_synthetic/lego": " -w --opacity_reset_interval 1000 --synthetic",
-    "nerf_synthetic/materials": " -w --opacity_reset_interval 1000 --synthetic",
-    "nerf_synthetic/mic": " -w --opacity_reset_interval 1000 --synthetic",
+    "nerf_synthetic/lego": " --opacity_reset_interval 1000 --synthetic --refl_init_value 1e-3",
+    "nerf_synthetic/materials": " --opacity_reset_interval 1000 --synthetic --refl_init_value 1e-3",
+    "nerf_synthetic/mic": " --opacity_reset_interval 1000 --synthetic",
     "nerf_synthetic/ship": " -w --opacity_reset_interval 1000 --synthetic"
 }
 
@@ -122,9 +122,11 @@ if not args.skip_training:
 
 if not args.skip_rendering:
     all_sources = []
-    for scene in ref_real_scenes:
-        #all_sources.append(args.ref_real + "/" + scene + " --iteration 30000 --render_normals")
-        all_sources.append(args.ref_real + "/" + scene + " --iteration 70000 --render_normals")
+    #for scene in ref_real_scenes:
+        #all_sources.append(args.ref_real + "/" + scene + " --iteration 60000 --render_normals")
+    all_sources.append(args.ref_real + "/" + ref_real_scenes[0] + " --iteration 60000 --render_normals")
+    all_sources.append(args.ref_real + "/" + ref_real_scenes[1] + " --iteration 70000 --render_normals")
+    all_sources.append(args.ref_real + "/" + ref_real_scenes[2] + " --iteration 70000 --render_normals")
     for scene in refnerf_scenes:
         all_sources.append(args.refnerf + "/" + scene + " --iteration 40000 --render_normals")
     for scene in nerf_synthetic_scenes:
