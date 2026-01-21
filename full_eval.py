@@ -54,17 +54,16 @@ if not args.skip_training:
 
         # dataset/scene
         dataset = scene.split('/')[0]
-        args = ""
-        if scene in scene_args.args:
-            args = scene_args.args[scene]
-        if dataset in scene_args.data.realDatasets:
-            args += scene_args.real.train
-        if dataset in scene_args.data.syntheticDatasets:
-            args += scene_args.synthetic.train
-
-        train_command = "python train.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + args
+        train_args = ""
+        if scene in scene_args["args"]:
+            train_args = scene_args["args"][scene]
+        if dataset in scene_args["data"]["realDatasets"]:
+            train_args += scene_args["real"]["train"]
+        if dataset in scene_args["data"]["syntheticDatasets"]:
+            train_args += scene_args["synthetic"]["train"]
 
         output_path = os.path.join(args.output_path, scene)
+        train_command = "python train.py -s " + source + " -m " + output_path + common_args + train_args
         os.makedirs(output_path, exist_ok=True)
         with open(os.path.join(output_path, "train_command.sh"), 'w') as file:
             file.write(train_command)
@@ -86,13 +85,14 @@ if not args.skip_rendering:
 
         # dataset/scene
         dataset = scene.split('/')[0]
-        args = ""
-        if dataset in scene_args.data.realDatasets:
-            args += scene_args.real.render
-        if dataset in scene_args.data.syntheticDatasets:
-            args += scene_args.synthetic.render
-
-        render_command = "python render.py -s " + source + " -m " + args.output_path + "/" + scene + common_args + args
+        render_args = ""
+        if dataset in scene_args["data"]["realDatasets"]:
+            render_args += scene_args["real"]["render"]
+        if dataset in scene_args["data"]["syntheticDatasets"]:
+            render_args += scene_args["synthetic"]["render"]
+            
+        output_path = os.path.join(args.output_path, scene)
+        render_command = "python render.py -s " + source + " -m " + output_path + common_args + render_args
         with open(os.path.join(output_path, "train_command.sh"), 'a') as file:
             file.write(render_command)
 
