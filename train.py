@@ -362,7 +362,6 @@ def training_report(
                     render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
-                    base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
 
@@ -377,7 +376,13 @@ def training_report(
 
                         tiles.append(to_3ch(gt_image))
                         tiles.append(to_3ch(image))
-                        tiles.append(to_3ch(base_color))
+
+                        try:
+                            if "base_color_map" in render_pkg:
+                                base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")   # usually (1,3,H,W)
+                                tiles.append(to_3ch(base_color))
+                        except Exception:
+                            pass
 
                         try:
                             depth = render_pkg["surf_depth"]     
