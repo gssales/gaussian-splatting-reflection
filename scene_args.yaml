@@ -10,8 +10,8 @@ real:
   train: " --init_until_iter 3000 --use_env_scope --iteration 65000 --longer_prop_iter 15000"
   render: " --iteration 65000"
 synthetic: 
-  train: " -w --random_background_color --iteration 35000"
-  render: " --iteration 35000 --init_until_iter 20"
+  train: " -w --random_background_color --iteration 35000 --init_until_iter 20"
+  render: " --iteration 35000"
 args:
   ref_real/sedan: " -r 8 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138"
   ref_real/gardenspheres: " -r 6 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974"
