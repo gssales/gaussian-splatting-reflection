@@ -1,15 +1,8 @@
-import os
 import re
 import json
 import csv
 from pathlib import Path
 from argparse import ArgumentParser
-
-
-ENV_SHAPES = {"forest_env_sphere", "forest_env_cube", "constant_env_sphere", "constant_env_cube"}
-DENSITIES = {"dense_rand", "dense_regular", "sparse_rand", "sparse_regular"}
-MATERIALS = {"diffuse", "glossy", "metal", "mirror", "black", "white"}
-
 
 def parse_fps_txt(fps_path: Path):
     """
@@ -76,38 +69,23 @@ def is_valid_scene_path(scene_dir: Path):
     return (env in ENV_SHAPES) and (dens in DENSITIES) and (mat in MATERIALS)
 
 
-def find_scene_dirs(output_root: Path, camera_folder: str = "camera_regular"):
-    """
-    Finds all scene directories under:
-      output_root/camera_regular/<env>/<density>/<material>
-    """
-    base = output_root / camera_folder
-    if not base.is_dir():
-        raise FileNotFoundError(f"Not found: {base}")
+def find_scene_dirs(base_path: Path):
+    if (base_path / "cfg_args").exists():
+        return [base_path]
 
-    # Expect exactly 3 levels below camera_folder
-    # (env_shape)/(density_sampling)/(material)
     scene_dirs = []
-    for env_dir in base.iterdir():
-        if not env_dir.is_dir() or env_dir.name not in ENV_SHAPES:
-            continue
-        for dens_dir in env_dir.iterdir():
-            if not dens_dir.is_dir() or dens_dir.name not in DENSITIES:
-                continue
-            for mat_dir in dens_dir.iterdir():
-                if not mat_dir.is_dir() or mat_dir.name not in MATERIALS:
-                    continue
-                scene_dirs.append(mat_dir)
-
-    return sorted(scene_dirs)
+    for item in base_path.iterdir():
+        if item.is_dir():
+            sub = find_scene_dirs(item)
+            if sub is not None:
+                scene_dirs.extend(sub)
+    return scene_dirs
 
 
 def main():
-    parser = ArgumentParser(description="Collect PSNR/SSIM/LPIPS + FPS into a CSV across all materials models.")
-    parser.add_argument("--output_path", default=r"E:\output\3dgs-dr\eval",
+    parser = ArgumentParser(description="Collect PSNR/SSIM/LPIPS + FPS into a CSV across all scenes.")
+    parser.add_argument("--output_path", default=r"E:\\output\\ours\\eval",
                         help="Root eval output path (contains camera_regular/...)")
-    parser.add_argument("--camera_folder", default="camera_regular",
-                        help="Subfolder name under output_path (default: camera_regular)")
     parser.add_argument("--csv_name", default="results_all.csv",
                         help="Output CSV filename (written inside output_path)")
     parser.add_argument("--tsv", action="store_true",
@@ -117,18 +95,13 @@ def main():
     output_root = Path(args.output_path)
     out_file = output_root / args.csv_name
 
-    scene_dirs = find_scene_dirs(output_root, camera_folder=args.camera_folder)
-    print(f"Found {len(scene_dirs)} scene folders under {output_root / args.camera_folder}")
+    scene_dirs = find_scene_dirs(output_root)
+    print(f"Found {len(scene_dirs)} scene folders under {output_root}")
 
     rows = []
     missing = []
 
     for scene_dir in scene_dirs:
-        # scene_dir ends with .../<env>/<density>/<material>
-        env_shape = scene_dir.parent.parent.name
-        density = scene_dir.parent.name
-        material = scene_dir.name
-
         fps_path = scene_dir / "fps.txt"
         results_path = scene_dir / "results.json"
 
@@ -158,21 +131,18 @@ def main():
         lpips = entry.get("LPIPS", "")
 
         rows.append({
-            "env_shape": env_shape,
-            "density_sampling": density,
-            "material": material,
-            "scene_rel": str(scene_dir.relative_to(output_root)),
+            "scene": str(scene_dir.relative_to(output_root)),
             "key": best_key,
-            "PSNR": psnr,
-            "SSIM": ssim,
-            "LPIPS": lpips,
-            "fps": fps_value,
+            "PSNR": str(psnr).replace(".", ","),
+            "SSIM": str(ssim).replace(".", ","),
+            "LPIPS": str(lpips).replace(".", ","),
+            "fps": str(fps_value).replace(".", ","),
             "count": count_value,
         })
 
     # Write table
     delimiter = "\t" if args.tsv else ","
-    fieldnames = ["env_shape", "density_sampling", "material", "scene_rel", "key", "PSNR", "SSIM", "LPIPS", "fps", "count"]
+    fieldnames = ["scene", "key", "PSNR", "SSIM", "LPIPS", "fps", "count"]
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with open(out_file, "w", newline="", encoding="utf-8") as f:
