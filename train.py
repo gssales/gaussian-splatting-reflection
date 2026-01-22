@@ -193,7 +193,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             }
             bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
             training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
-            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
+            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
