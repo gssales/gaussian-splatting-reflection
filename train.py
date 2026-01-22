@@ -192,7 +192,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'total_loss': loss.item()
             }
             bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
+            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
@@ -322,13 +323,8 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 @torch.no_grad()
-def training_report(
-    tb_writer, 
+def progress_report(
     iteration,
-    train_loss_report, 
-    l1_loss, 
-    elapsed,
-    testing_iterations,
     progress_iterations, 
     scene : Scene, 
     renderFunc, 
@@ -337,17 +333,11 @@ def training_report(
     initial_stage,
     model_path,
 ):
-    if tb_writer:
-        for tag,loss in train_loss_report.items():
-            tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
-        tb_writer.add_scalar('iter_time', elapsed, iteration)
-        tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
-        tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-
     if iteration in progress_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, len(scene.getTrainCameras()), 5)]})
+        test_cam_interval = 5 if len(scene.getTestCameras()) > 30 else 1
+        validation_configs = ({'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())] for idx in range(test_cam_interval-1, len(scene.getTestCameras()), test_cam_interval)]}, 
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(4, len(scene.getTrainCameras()), 5)]})
 
         torch.cuda.empty_cache()
         for config in validation_configs:
@@ -427,6 +417,27 @@ def training_report(
                             img_name = f"{config_name}_{idx:03d}_{iteration}.png"
                             save_path = os.path.join(base_save_dir, img_name)
                             save_image(grid, save_path)
+
+@torch.no_grad()
+def training_report(
+    tb_writer, 
+    iteration,
+    train_loss_report, 
+    l1_loss, 
+    elapsed,
+    testing_iterations,
+    scene : Scene, 
+    renderFunc, 
+    renderArgs,
+    bg,
+    initial_stage,
+):
+    if tb_writer:
+        for tag,loss in train_loss_report.items():
+            tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
+        tb_writer.add_scalar('iter_time', elapsed, iteration)
+        tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+        tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
