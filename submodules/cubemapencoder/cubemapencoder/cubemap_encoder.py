@@ -145,7 +145,7 @@ class MipCubemapEncoder(nn.Module):
         n_elems = 0
         for ii in range(num_levels):
             iL = int(np.ceil(L))
-            param = nn.Parameter(torch.empty(6,self.level_dim,iL,iL))
+            param = nn.Parameter(torch.rand(6,self.level_dim,iL,iL) * 10 - 5)
             n_elems += 6 * self.level_dim * iL * iL
             params_list.append(param)
             L = L * per_level_scale
