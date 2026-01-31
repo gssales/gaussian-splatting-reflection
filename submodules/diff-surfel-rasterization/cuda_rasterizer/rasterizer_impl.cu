@@ -207,6 +207,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* shs,
 	const float* colors_precomp,
 	const float* refl_strengths,
+	const float* roughness,
 	const float* img_mask,
 	const float* opacities,
 	const float* scales,
@@ -344,6 +345,7 @@ int CudaRasterizer::Rasterizer::forward(
 		env_scope_mask,
 		feature_ptr,
 		refl_strengths,
+		roughness,
 		img_mask,
 		transMat_ptr,
 		geomState.depths,
@@ -369,6 +371,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* shs,
 	const float* colors_precomp,
 	const float* refl_strengths,
+	const float* roughness,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
@@ -389,6 +392,7 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dopacity,
 	float* dL_dcolor,
 	float* dL_drefl_strengths,
+	float* dL_droughness,
 	float* dL_dmean3D,
 	float* dL_dtransMat,
 	float* dL_dsh,
@@ -429,6 +433,7 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.normal_opacity,
 		color_ptr,
 		refl_strengths,
+		roughness,
 		transMat_ptr,
 		depth_ptr,
 		imgState.accum_alpha,
@@ -441,7 +446,8 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dnormal,
 		dL_dopacity,
 		dL_dcolor,
-		dL_drefl_strengths), debug)
+		dL_drefl_strengths,
+		dL_droughness), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

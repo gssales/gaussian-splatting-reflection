@@ -133,6 +133,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         mask = img_mask
         
     refl_strengths = pc.get_refl
+    roughness = pc.get_roughness
 
     base_color, radii, allmap, refl_strength_map, is_rendered = rasterizer(
         means3D = means3D,
@@ -140,6 +141,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         shs = shs,
         colors_precomp = colors_precomp,
         refl_strengths = refl_strengths,
+        roughness = roughness,
         opacities = opacity,
         scales = scales,
         rotations = rotations,
@@ -173,6 +175,9 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
 
     # get scope mask
     mask = allmap[7:8]
+
+    # get roughness_map
+    roughness_map = allmap[8:9]
 
     # psedo surface attributes
     # surf depth is either median or expected by setting depth_ratio to 1 or 0
@@ -221,6 +226,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'surf_normal': surf_normal,
             'env_scope_mask': mask,
             "refl_strength_map": refl_strength_map,
+            "roughness_map": roughness_map,
             "refl_color_map": refl_color,
             "base_color_map": base_color,
             "is_rendered": is_rendered

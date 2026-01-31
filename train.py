@@ -44,7 +44,7 @@ except:
 
 def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, progress_iterations):
 
-    view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "Normal", "Refl. Color", "Edge", "Curvature", "Mask"]
+    view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "-", "Roughness", "Refl. Color", "Mask"]
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -397,6 +397,10 @@ def progress_report(
 
                             if "refl_strength_map" in render_pkg:
                                 rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
+                                tiles.append(to_3ch(rm))
+
+                            if "roughness_map" in render_pkg:
+                                rm = render_pkg["roughness_map"]         # maybe (1,1,H,W) or (1,H,W)
                                 tiles.append(to_3ch(rm))
                         except Exception:
                             pass

@@ -64,6 +64,7 @@ namespace FORWARD
 		const bool* env_scope_mask,
 		const float* features,
 		const float* refl_strengths,
+		const float* roughness,
 		const float* img_mask,
 		const float* transMats,
 		const float* depths,

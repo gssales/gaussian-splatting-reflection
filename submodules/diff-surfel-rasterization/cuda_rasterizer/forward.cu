@@ -270,6 +270,7 @@ renderCUDA(
 	const bool* __restrict__ env_scope_mask,
 	const float* __restrict__ features,
 	const float* __restrict__ refl_stengths,
+	const float* __restrict__ roughnesses,
 	const float* __restrict__ img_mask,
 	const float* __restrict__ transMats,
 	const float* __restrict__ depths,
@@ -315,6 +316,7 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 	float refl_strength = 0.0f;
+	float roughness = 0.0f;
 	float mask = 0.0f;
 
 
@@ -439,6 +441,7 @@ renderCUDA(
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
 			refl_strength += refl_stengths[collected_id[j]] * w;
+			roughness += roughnesses[collected_id[j]] * w;
 
 			if (env_scope_mask[collected_id[j]])
 				mask = 1.0f;
@@ -475,6 +478,7 @@ renderCUDA(
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		out_others[pix_id + MASK_OFFSET * H * W] = mask;
+		out_others[pix_id + ROUGHNESS_OFFSET * H * W] = roughness;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
 #endif
 	}
@@ -494,6 +498,7 @@ void FORWARD::render(
 	const bool* env_scope_mask,
 	const float* colors,
 	const float* refl_strengths,
+	const float* roughness,
 	const float* img_mask,
 	const float* transMats,
 	const float* depths,
@@ -519,6 +524,7 @@ void FORWARD::render(
 		env_scope_mask,
 		colors,
 		refl_strengths,
+		roughness,
 		img_mask,
 		transMats,
 		depths,

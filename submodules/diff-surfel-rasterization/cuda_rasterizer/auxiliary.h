@@ -26,6 +26,7 @@
 #define MIDDEPTH_OFFSET 5
 #define DISTORTION_OFFSET 6
 #define MASK_OFFSET 7
+#define ROUGHNESS_OFFSET 8
 // #define MEDIAN_WEIGHT_OFFSET 7
 
 // distortion helper macros

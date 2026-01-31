@@ -49,6 +49,9 @@ class GaussianModel:
         self.refl_activation = torch.sigmoid
         self.inverse_refl_activation = inverse_sigmoid
 
+        self.roughness_activation = torch.sigmoid
+        self.inverse_roughness_activation = inverse_sigmoid
+
         self.rotation_activation = torch.nn.functional.normalize
 
 
@@ -70,6 +73,7 @@ class GaussianModel:
 
         self._refl_strength = torch.empty(0)
         self.init_refl_value = init_refl_value
+        self._roughness = torch.empty(0)
         self.env_map = None
         self.env_map_resol = init_cubemap_resol
 
@@ -85,6 +89,7 @@ class GaussianModel:
             self._rotation,
             self._opacity,
             self._refl_strength,
+            self._roughness,
             self.max_radii2D,
             self.xyz_gradient_accum,
             self.denom,
@@ -102,6 +107,7 @@ class GaussianModel:
         self._rotation, 
         self._opacity,
         self._refl_strength,
+        self._roughness,
         self.max_radii2D, 
         xyz_gradient_accum, 
         denom,
@@ -145,6 +151,10 @@ class GaussianModel:
         return self.refl_activation(self._refl_strength)
     
     @property
+    def get_roughness(self):
+        return self.roughness_activation(self._roughness)
+    
+    @property
     def get_envmap(self): # 
         return self.env_map
 
@@ -171,6 +181,7 @@ class GaussianModel:
 
         opacities = self.inverse_opacity_activation(init_opacity_value * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
         refl_strengths = self.inverse_refl_activation(torch.ones_like(opacities).cuda() * init_refl_value)
+        roughnesses = self.inverse_roughness_activation(torch.ones_like(opacities).cuda() * 0.01)
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
@@ -180,8 +191,7 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._refl_strength = nn.Parameter(refl_strengths.requires_grad_(True))
-
-        env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol)
+        self._roughness = nn.Parameter(roughnesses.requires_grad_(True))
         self.env_map = env_map.cuda()
 
     def training_setup(self, training_args):
@@ -197,6 +207,7 @@ class GaussianModel:
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self._refl_strength], 'lr': training_args.refl_lr, "name": "refl"},
+            {'params': [self._roughness], 'lr': training_args.roughness_lr, "name": "roughness"},
             {'params': self.env_map.parameters(), 'lr': training_args.envmap_cubemap_lr, "name": "env"}
         ]
 
@@ -235,6 +246,7 @@ class GaussianModel:
             l.append('f_rest_{}'.format(i))
         l.append('opacity')
         l.append('refl')
+        l.append('roughness')
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
@@ -252,11 +264,12 @@ class GaussianModel:
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
         refls = self._refl_strength.detach().cpu().numpy() 
+        roughness = self._roughness.detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, refls, scale, rotation), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, refls, roughness, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -305,6 +318,7 @@ class GaussianModel:
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
         refls = np.asarray(plydata.elements[0]["refl"])[..., np.newaxis]
+        roughness = np.asarray(plydata.elements[0]["roughness"])[..., np.newaxis]
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
@@ -339,33 +353,6 @@ class GaussianModel:
             self.env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol).cuda()
             self.env_map.load_state_dict(data)
 
-        # cubemap_textures_names = ["px", "nx", "ny", "py", "pz", "nz",]
-        # cubemap_textures = []
-        # for name in cubemap_textures_names:
-        #     image = Image.open(path.replace('point_cloud.ply', name + ".png"))
-        #     texture = PILtoTorch(image, image.size)[0:3]
-        #     texture = inverse_sigmoid(texture)
-        #     cubemap_textures.append(F.adjust_sharpness(texture, 2.0))
-
-        # cubemap_textures = torch.stack(cubemap_textures).cuda()
-        # cubemap_textures = torch.clamp(cubemap_textures, min=1e-3, max=1-1e-3)
-        
-        # print(cubemap_textures.shape)
-        
-        # for i in range(6):
-        #     torchvision.utils.save_image(cubemap_textures[i], path.replace('point_cloud.ply', cubemap_textures_names[i] + "_sharp.png"))
-
-        # self.env_map.set_textures(cubemap_textures)
-#===
-        # textures = self.env_map.params['Cubemap_texture']
-        # sharpen = UnsharpMask((5,5), (1.5,1.5))
-        # for i in range(6):
-        #     textures[i] = sharpen(textures[i].unsqueeze(0))
-
-        # self.env_map.set_textures(textures)
-
-        # self.env_map.filter_textures((5,5), (1.5,1.5))
-
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -373,6 +360,7 @@ class GaussianModel:
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self._refl_strength = nn.Parameter(torch.tensor(refls, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._roughness = nn.Parameter(torch.tensor(roughness, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
 
@@ -441,6 +429,7 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._refl_strength = optimizable_tensors["refl"]
+        self._roughness = optimizable_tensors["roughness"]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
@@ -470,14 +459,15 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_refl):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_refl, new_roughness):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
         "opacity": new_opacities,
         "scaling" : new_scaling,
         "rotation" : new_rotation,
-        "refl" : new_refl}
+        "refl" : new_refl,
+        "roughness" : new_roughness}
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
@@ -487,6 +477,7 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
+        self._roughness = optimizable_tensors["roughness"]
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -513,8 +504,9 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         new_refl = self._refl_strength[selected_pts_mask].repeat(N,1)
+        new_roughness = self._roughness[selected_pts_mask].repeat(N,1)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_refl)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_refl, new_roughness)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -532,8 +524,9 @@ class GaussianModel:
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_refl = self._refl_strength[selected_pts_mask]
+        new_roughness = self._roughness[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_refl)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_refl, new_roughness)
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
         grads = self.xyz_gradient_accum / self.denom
@@ -555,45 +548,3 @@ class GaussianModel:
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
-
-def rgb2hsl_torch(rgb: torch.Tensor) -> torch.Tensor:
-    cmax, cmax_idx = torch.max(rgb, dim=1, keepdim=True)
-    cmin = torch.min(rgb, dim=1, keepdim=True)[0]
-    delta = cmax - cmin
-    hsl_h = torch.empty_like(rgb[:, 0:1, :, :])
-    cmax_idx[delta == 0] = 3
-    hsl_h[cmax_idx == 0] = (((rgb[:, 1:2] - rgb[:, 2:3]) / delta) % 6)[cmax_idx == 0]
-    hsl_h[cmax_idx == 1] = (((rgb[:, 2:3] - rgb[:, 0:1]) / delta) + 2)[cmax_idx == 1]
-    hsl_h[cmax_idx == 2] = (((rgb[:, 0:1] - rgb[:, 1:2]) / delta) + 4)[cmax_idx == 2]
-    hsl_h[cmax_idx == 3] = 0.
-    hsl_h /= 6.
-
-    hsl_l = (cmax + cmin) / 2.
-    hsl_s = torch.empty_like(hsl_h)
-    hsl_s[hsl_l == 0] = 0
-    hsl_s[hsl_l == 1] = 0
-    hsl_l_ma = torch.bitwise_and(hsl_l > 0, hsl_l < 1)
-    hsl_l_s0_5 = torch.bitwise_and(hsl_l_ma, hsl_l <= 0.5)
-    hsl_l_l0_5 = torch.bitwise_and(hsl_l_ma, hsl_l > 0.5)
-    hsl_s[hsl_l_s0_5] = ((cmax - cmin) / (hsl_l * 2.))[hsl_l_s0_5]
-    hsl_s[hsl_l_l0_5] = ((cmax - cmin) / (- hsl_l * 2. + 2.))[hsl_l_l0_5]
-    return torch.cat([hsl_h, hsl_s, hsl_l], dim=1)
-
-
-def hsl2rgb_torch(hsl: torch.Tensor) -> torch.Tensor:
-    hsl_h, hsl_s, hsl_l = hsl[:, 0:1], hsl[:, 1:2], hsl[:, 2:3]
-    _c = (-torch.abs(hsl_l * 2. - 1.) + 1) * hsl_s
-    _x = _c * (-torch.abs(hsl_h * 6. % 2. - 1) + 1.)
-    _m = hsl_l - _c / 2.
-    idx = (hsl_h * 6.).type(torch.uint8)
-    idx = (idx % 6).expand(-1, 3, -1, -1)
-    rgb = torch.empty_like(hsl)
-    _o = torch.zeros_like(_c)
-    rgb[idx == 0] = torch.cat([_c, _x, _o], dim=1)[idx == 0]
-    rgb[idx == 1] = torch.cat([_x, _c, _o], dim=1)[idx == 1]
-    rgb[idx == 2] = torch.cat([_o, _c, _x], dim=1)[idx == 2]
-    rgb[idx == 3] = torch.cat([_o, _x, _c], dim=1)[idx == 3]
-    rgb[idx == 4] = torch.cat([_x, _o, _c], dim=1)[idx == 4]
-    rgb[idx == 5] = torch.cat([_c, _o, _x], dim=1)[idx == 5]
-    rgb += _m
-    return rgb
