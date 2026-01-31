@@ -256,7 +256,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 im_data = np.array(image.convert("RGB"))
                 a_data = np.array(mask.convert("RGB"))[..., 0:1]
                 arr = np.concatenate((im_data, a_data), axis=-1)
-                image = Image.fromarray(np.array(arr, dtype=np.byte), "RGBA")
+                image = Image.fromarray(np.array(arr, dtype=np.uint8), "RGBA")
             
             fo = fov2focal(fovx, image.size[0])
             W,H = image.size[0], image.size[1]
