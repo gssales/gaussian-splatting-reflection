@@ -22,7 +22,7 @@ def angular_error_map(pred: torch.Tensor, gt: torch.Tensor, eps: float = 1e-8):
     ang_deg = torch.acos(cos_ang) * (180.0 / torch.pi)
 
     # Mask invalid pixels
-    invalid = (norm_pred <= eps) | (norm_gt <= eps) | torch.isnan(ang_deg)
+    invalid = torch.isnan(ang_deg)
     ang_deg = ang_deg.clone()
     ang_deg[invalid] = float("nan")
     
