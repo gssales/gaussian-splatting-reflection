@@ -153,6 +153,7 @@ renderCUDA(
 	const float* __restrict__ transMats,
 	const float* __restrict__ colors,
 	const float* __restrict__ refl_strengths,
+	const float* __restrict__ roughness,
 	const float* __restrict__ depths,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
@@ -164,7 +165,8 @@ renderCUDA(
 	float* __restrict__ dL_dnormal3D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_drefl_strengths)
+	float* __restrict__ dL_drefl_strengths,
+	float* __restrict__ dL_droughness)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -188,6 +190,7 @@ renderCUDA(
 	__shared__ float4 collected_normal_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_refl_strengths[BLOCK_SIZE];
+	__shared__ float collected_roughness[BLOCK_SIZE];
 	__shared__ float3 collected_Tu[BLOCK_SIZE];
 	__shared__ float3 collected_Tv[BLOCK_SIZE];
 	__shared__ float3 collected_Tw[BLOCK_SIZE];
@@ -207,6 +210,9 @@ renderCUDA(
 	float dL_dpixel[C];
 	float dL_drefl_strength;
 	float accum_refl_strength_rec = 0;
+	
+	float dL_droughness_pix;
+	float accum_roughness_rec = 0;
 
 #if RENDER_AXUTILITY
 	float dL_dreg;
@@ -226,6 +232,8 @@ renderCUDA(
 
 		dL_dmedian_depth = dL_depths[MIDDEPTH_OFFSET * H * W + pix_id];
 		// dL_dmax_dweight = dL_depths[MEDIAN_WEIGHT_OFFSET * H * W + pix_id];
+
+		dL_droughness_pix = dL_depths[ROUGHNESS_OFFSET * H * W + pix_id];
 	}
 
 	// for compute gradient with respect to depth and normal
@@ -250,6 +258,7 @@ renderCUDA(
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
 	float last_refl_strength = 0;
+	float last_roughness = 0;
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -275,6 +284,7 @@ renderCUDA(
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 			collected_refl_strengths[block.thread_rank()] = refl_strengths[coll_id];
+			collected_roughness[block.thread_rank()] = roughness[coll_id];
 
 				// collected_depths[block.thread_rank()] = depths[coll_id];
 		}
@@ -353,6 +363,11 @@ renderCUDA(
 			last_refl_strength = collected_refl_strengths[j];
 			dL_dalpha += (collected_refl_strengths[j] - accum_refl_strength_rec) * dL_drefl_strength;
 			atomicAdd(&(dL_drefl_strengths[global_id]), dchannel_dcolor * dL_drefl_strength);
+			
+			accum_roughness_rec = last_alpha * last_roughness + (1.f - last_alpha) * accum_roughness_rec;
+			last_roughness = collected_roughness[j];
+			dL_dalpha += (collected_roughness[j] - accum_roughness_rec) * dL_droughness_pix;
+			atomicAdd(&(dL_droughness[global_id]), dchannel_dcolor * dL_droughness_pix);
 
 			float dL_dz = 0.0f;
 			float dL_dweight = 0;
@@ -714,6 +729,7 @@ void BACKWARD::render(
 	const float4* normal_opacity,
 	const float* colors,
 	const float* refl_strengths,
+	const float* roughness,
 	const float* transMats,
 	const float* depths,
 	const float* final_Ts,
@@ -726,7 +742,8 @@ void BACKWARD::render(
 	float* dL_dnormal3D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_drefl_strengths)
+	float* dL_drefl_strengths,
+	float* dL_droughness)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -739,6 +756,7 @@ void BACKWARD::render(
 		transMats,
 		colors,
 		refl_strengths,
+		roughness,
 		depths,
 		final_Ts,
 		n_contrib,
@@ -750,6 +768,7 @@ void BACKWARD::render(
 		dL_dnormal3D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_drefl_strengths
+		dL_drefl_strengths,
+		dL_droughness
 		);
 }

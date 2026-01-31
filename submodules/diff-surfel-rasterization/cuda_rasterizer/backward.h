@@ -32,6 +32,7 @@ namespace BACKWARD
 		const float* transMats,
 		const float* colors,
 		const float* refl_strengths,
+		const float* roughness,
 		const float* depths,
 		const float* final_Ts,
 		const uint32_t* n_contrib,
@@ -43,7 +44,8 @@ namespace BACKWARD
 		float* dL_dnormal3D,
 		float* dL_dopacity,
 		float* dL_dcolors,
-		float* dL_drefl_strengths);
+		float* dL_drefl_strengths,
+		float* dL_droughness);
 
 	void preprocess(
 		int P, int D, int M,
