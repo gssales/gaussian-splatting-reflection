@@ -5,10 +5,11 @@ from PIL import Image
 from argparse import ArgumentParser
 from torchvision.utils import save_image
 import tqdm
+import nvdiffrast.torch
 
 from arguments import ModelParams, OptimizationParams, PipelineParams, get_combined_args
 from scene import Scene, GaussianModel
-from gaussian_renderer import render, get_refl_color
+from gaussian_renderer import render, get_refl_color, sample_camera_rays, reflection
 from utils.general_utils import PILtoTorch, inverse_sigmoid
 from cubemapencoder import CubemapEncoder
 from utils.image_utils import psnr
@@ -157,6 +158,61 @@ def test_roughness(model: ModelParams, pipe: PipelineParams, output_dir: str, it
     print(f"Original render:")
     print(f"Average over all views - PSNR: {sum(original_psnr_values)/len(original_psnr_values):.2f}, SSIM: {sum(original_ssim_values)/len(original_ssim_values):.3f}, LPIPS: {sum(original_lpips_values)/len(original_lpips_values):.3f}")
 
+def test_nvdiffrast(model: ModelParams, pipe: PipelineParams, output_dir: str, iteration: int, camera_index: int, cubemap_mipmap_path: str):
+    gaussians = GaussianModel(model.sh_degree)
+    scene = Scene(model, gaussians, load_iteration=iteration, shuffle=False)
+    bg_color = [1, 1, 1] if model.white_background else [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    
+    textures = []
+    cubemap_path = "E:\\Research\\projects\\gaussian-splatting-reflection\\cubemap"
+    for i in range(6):
+        img = Image.open(f"{cubemap_path}/{i}_40000.png")
+        cubemap_face = PILtoTorch(img, img.size)[0:3]
+        textures.append(cubemap_face.cuda())
+
+    textures = torch.stack(textures, dim=0)  # (6, 3, H, W)
+    # reshape to [minibatch_size, 6, tex_height, tex_width, tex_channels]
+    textures = textures.permute(0,2,3,1).unsqueeze(0)
+    
+    for camera_index in range(0, 101, 10):
+        print(f"Testing camera index {camera_index}...")
+        camera = scene.getTrainCameras()[camera_index]
+
+        with torch.no_grad():
+            rendered = render(camera, gaussians, pipe, background, initial_stage=False)
+            
+            base_color = rendered['base_color_map']
+            refl_map = rendered['refl_strength_map']
+            roughness_map = rendered['roughness_map']
+            normal = rendered['rend_normal'].permute(1,2,0)
+            alpha_map = rendered['rend_alpha']
+            original_refl_color = rendered['refl_color_map']
+
+            rays_d = sample_camera_rays(camera.HWK, camera.R, camera.T)
+            rays_d = reflection(rays_d, normal).unsqueeze(0)
+
+            roughness_map = roughness_map / roughness_map.max()
+            mip_level = (1-roughness_map) * (MIPMAP_LEVELS - 1)
+
+            encoding = nvdiffrast.torch.texture(
+                textures.contiguous(),
+                rays_d.contiguous(),
+                mip_level_bias=mip_level*(MIPMAP_LEVELS - 1),
+                boundary_mode="cube",
+                max_mip_level=MIPMAP_LEVELS - 1,
+            )
+
+            ## encodig has shape (1, H, W, 3)
+            encoding = encoding[0].permute(2,0,1)  # (3, H, W)
+        
+            # save_image(rendered, os.path.join(output_dir, f"image_{camera_index}.png"))
+            save_image(refl_map, os.path.join(output_dir, f"refl_map_{camera_index}.png"))
+            save_image(roughness_map, os.path.join(output_dir, f"roughness_map_{camera_index}.png"))
+            save_image(encoding, os.path.join(output_dir, f"refl_color_{camera_index}.png"))
+            save_image(original_refl_color, os.path.join(output_dir, f"original_refl_color_{camera_index}.png"))
+
+
 if __name__ == "__main__":
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
@@ -164,11 +220,11 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Exporting script parameters")
     lp = ModelParams(parser)
     pp = PipelineParams(parser)
-    parser.add_argument('--iteration', type=int, default=40000)
+    parser.add_argument('--iteration', type=int, default=7000)
     parser.add_argument('--camera_index', type=int, default=0)
     parser.add_argument('--cubemap_mipmap_path', type=str, default="E:\\output\\ours\\eval3\\shiny_blender\\ball\\roughness_test\\cubemap")
     parser.add_argument('--output_dir', type=str, default="E:\\output\\ours\\eval3\\shiny_blender\\ball\\roughness_test")
 
     args = get_combined_args(parser)
     
-    test_roughness(lp.extract(args), pp.extract(args), args.output_dir, args.iteration, args.camera_index, args.cubemap_mipmap_path)
+    test_nvdiffrast(lp.extract(args), pp.extract(args), args.output_dir, args.iteration, args.camera_index, args.cubemap_mipmap_path)

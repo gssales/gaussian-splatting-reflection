@@ -34,6 +34,11 @@ def get_refl_color(envmap: torch.Tensor, HWK, R, T, normal_map): #RT W2C
     rays_d = reflection(rays_d, normal_map)
     return sample_cubemap_color(rays_d, envmap)
 
+def get_mip_refl_color(envmap: torch.Tensor, HWK, R, T, normal_map, roughness_map): #RT W2C
+    rays_d = sample_camera_rays(HWK, R, T)
+    rays_d = reflection(rays_d, normal_map).unsqueeze(0)
+    return torch.sigmoid(envmap(rays_d, roughness_map))
+
 def render_env_map(pc: GaussianModel):
     env_cood1 = sample_cubemap_color(get_env_rayd1(512,1024), pc.get_envmap)
     env_cood2 = sample_cubemap_color(get_env_rayd2(512,1024), pc.get_envmap)
@@ -209,7 +214,10 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'env_scope_mask': mask
         }
     else:
-        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
+        # assume roughness_map
+        refl_color = get_mip_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal, roughness_map)
+
+        # refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
 
         final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
         # final_image = final_image.clamp(0, 1)

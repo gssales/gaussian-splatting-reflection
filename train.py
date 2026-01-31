@@ -195,15 +195,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
             progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
 
-            if iteration % 10000 == 0:
-                os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
-                for i in range(6):
-                    torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, 'cubemap/{}_{}.png'.format(i, iteration)))
+            # if iteration == 15000 or iteration == 30000 or iteration == 45100:
+            #     gaussians.double_env_map()
 
-            if iteration == densify_until_iteration or iteration == 45000:
-                gaussians.double_env_map()
+            # if iteration == 10000 or iteration == 15000 or iteration == 20000 or iteration == 25000:
+            #     gaussians.up_env_map_max_level(gaussians.env_map.max_level +1)
 
-            if iteration > densify_until_iteration*2:
+            if iteration > 40000:
                 gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
@@ -249,6 +247,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     if outside_msk is not None:
                         scale_mask = torch.logical_or(scale_mask, outside_msk)
                     gaussians.reset_scale(enlarge_scale=1.5, exclusive_msk=scale_mask)
+
+                    roughness_mask = (refl > 0.1).flatten()
+                    if outside_msk is not None:
+                        roughness_mask = torch.logical_or(roughness_mask, outside_msk)
+                    gaussians.reset_roughness(exclusive_msk=roughness_mask)
 
                     gaussians.reset_refl()
                     
@@ -338,6 +341,29 @@ def progress_report(
         test_cam_interval = 5 if len(scene.getTestCameras()) > 30 else 1
         validation_configs = ({'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())] for idx in range(test_cam_interval-1, len(scene.getTestCameras()), test_cam_interval)]}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(4, len(scene.getTrainCameras()), 5)]})
+
+        cubemap_dir = os.path.join(model_path, 'progress/cubemaps')
+        os.makedirs(cubemap_dir, exist_ok=True)
+        
+        textures = torch.sigmoid(scene.gaussians.env_map.texture[0])
+        textures = textures.permute(0,3,1,2)
+        # texture shape [6, resolution, resolution, 3]
+        cubemap_grid = [None]*10
+        cubemap_grid[1] = textures[2]
+        cubemap_grid[4] = textures[1]
+        cubemap_grid[5] = textures[4]
+        cubemap_grid[6] = textures[0]
+        cubemap_grid[7] = textures[5]
+        cubemap_grid[9] = textures[3]
+        cubemap_grid[0] = torch.zeros_like(textures[0])  # placeholder
+        cubemap_grid[2] = torch.zeros_like(textures[0])  # placeholder
+        cubemap_grid[3] = torch.zeros_like(textures[0])  # placeholder
+        cubemap_grid[8] = torch.zeros_like(textures[0])  # placeholder
+
+        grid = make_grid(cubemap_grid, nrow=4, padding=0)
+        cubemap_name = f"cubemap_{iteration}.png"
+        save_path = os.path.join(cubemap_dir, cubemap_name)
+        save_image(grid, save_path)
 
         torch.cuda.empty_cache()
         for config in validation_configs:
