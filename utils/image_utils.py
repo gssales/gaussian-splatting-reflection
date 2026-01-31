@@ -44,7 +44,7 @@ def colormap(map, cmap="turbo"):
     colors = torch.tensor(plt.cm.get_cmap(cmap).colors).to(map.device)
     map = (map - map.min()) / (map.max() - map.min())
     map = (map * 255).round().long().squeeze()
-    # map = colors[map].permute(2,0,1)
+    map = colors[map].permute(2,0,1)
     return map
 
 def render_net_image(render_pkg, render_items, render_mode, camera):

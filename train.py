@@ -236,7 +236,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 gaussians.set_opacity_lr(opt.opacity_lr)
 
             if (iteration-500) % opt.normal_prop_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter):
-                if not opacity_reset_0 and opt.disable_normal_propagation:
+                if not opacity_reset_0 and not opt.disable_normal_propagation:
                     outside_msk = get_outside_msk()
                     opacity_old = gaussians.get_opacity
                     opac_mask = (opacity_old > 0.9).flatten()
