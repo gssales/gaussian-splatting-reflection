@@ -11,6 +11,7 @@
 
 import torch
 import numpy as np
+from scene.mipcubemap import CubemapMipEncoder
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
 import os
@@ -19,15 +20,8 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation
-from cubemapencoder import CubemapEncoder
-from PIL import Image
-from utils.general_utils import PILtoTorch
-from kornia.filters import UnsharpMask
-import torchvision
-from torchvision.transforms import functional as F
-
-
+from utils.general_utils import build_scaling_rotation
+    
 class GaussianModel:
 
     def setup_functions(self):
@@ -192,6 +186,9 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._refl_strength = nn.Parameter(refl_strengths.requires_grad_(True))
         self._roughness = nn.Parameter(roughnesses.requires_grad_(True))
+        # env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol)
+        levels = int(np.log2(self.env_map_resol)) + 1
+        env_map = CubemapMipEncoder(n_levels=levels, max_level=levels-2, resolution=self.env_map_resol)
         self.env_map = env_map.cuda()
 
     def training_setup(self, training_args):
@@ -275,8 +272,8 @@ class GaussianModel:
         PlyData([el]).write(path)
         
         if self.env_map is not None:
-            save_path = path.replace('.ply', '.map')
-            torch.save(self.env_map.state_dict(), save_path)
+            save_path = path.replace('point_cloud.ply', 'environment.map')
+            torch.save(self.env_map, save_path)
 
     def reset_refl(self, exclusive_msk = None):
         refl_new = self.inverse_refl_activation(torch.max(self.get_refl, torch.ones_like(self.get_refl)*self.init_refl_value))
@@ -284,6 +281,13 @@ class GaussianModel:
             refl_new[exclusive_msk] = self._refl_strength[exclusive_msk]
         optimizable_tensors = self.replace_tensor_to_optimizer(refl_new, "refl")
         self._refl_strength = optimizable_tensors["refl"]
+
+    def reset_roughness(self, exclusive_msk = None):
+        roughness_new = self.inverse_roughness_activation(torch.min(self.get_roughness, torch.ones_like(self.get_roughness)*0.01))
+        if exclusive_msk is not None:
+            roughness_new[exclusive_msk] = self._roughness[exclusive_msk]
+        optimizable_tensors = self.replace_tensor_to_optimizer(roughness_new, "roughness")
+        self._roughness = optimizable_tensors["roughness"]
 
     def reset_opacity(self, reset_value=0.01, exclusive_msk = None):
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*reset_value))
@@ -346,12 +350,9 @@ class GaussianModel:
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
-        map_path = path.replace('.ply', '.map')
+        map_path = path.replace('point_cloud.ply', 'environment.map')
         if os.path.exists(map_path):
-            data = torch.load(map_path)
-            self.env_map_resol = data["params.Cubemap_texture"].shape[2]
-            self.env_map = CubemapEncoder(output_dim=3, resolution=self.env_map_resol).cuda()
-            self.env_map.load_state_dict(data)
+            self.env_map = torch.load(map_path, weights_only=False).cuda()
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
@@ -363,6 +364,9 @@ class GaussianModel:
         self._roughness = nn.Parameter(torch.tensor(roughness, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+
+    def up_env_map_max_level(self, max_level):
+        self.env_map.max_level = min(self.env_map.n_levels-1, max_level)
 
     def double_env_map(self):
         self.env_map_resol = self.env_map_resol*2
@@ -376,13 +380,13 @@ class GaussianModel:
     def replace_env_map(self):
         for group in self.optimizer.param_groups:
             if group["name"] == "env":
-                stored_state1 = self.optimizer.state.get(group['params'][1], None)
-                stored_state1["exp_avg"] = torch.zeros_like(self.env_map.params["Cubemap_texture"])
-                stored_state1["exp_avg_sq"] = torch.zeros_like(self.env_map.params["Cubemap_texture"])
+                stored_state1 = self.optimizer.state.get(group['params'][0], None)
+                stored_state1["exp_avg"] = torch.zeros_like(self.env_map.texture)
+                stored_state1["exp_avg_sq"] = torch.zeros_like(self.env_map.texture)
 
-                del self.optimizer.state[group['params'][1]]
-                group["params"][1] = self.env_map.params["Cubemap_texture"]
-                self.optimizer.state[group['params'][1]] = stored_state1
+                del self.optimizer.state[group['params'][0]]
+                group["params"][0] = self.env_map.texture
+                self.optimizer.state[group['params'][0]] = stored_state1
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}

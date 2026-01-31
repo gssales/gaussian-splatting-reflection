@@ -195,8 +195,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
             progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
 
-            if iteration == densify_until_iteration:
-                gaussians.double_env_map()
+            # if iteration == densify_until_iteration:
+            #     gaussians.double_env_map()
+
+            # if iteration == 10000 or iteration == 15000 or iteration == 20000 or iteration == 25000:
+            #     gaussians.up_env_map_max_level(gaussians.env_map.max_level +1)
 
             if iteration > opt.iterations - 5000:
                 gaussians.freeze_xyz()
@@ -244,6 +247,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                         if outside_msk is not None:
                             scale_mask = torch.logical_or(scale_mask, outside_msk)
                         gaussians.reset_scale(enlarge_scale=1.5, exclusive_msk=scale_mask)
+
+                        roughness_mask = (refl > 0.1).flatten()
+                        if outside_msk is not None:
+                            roughness_mask = torch.logical_or(roughness_mask, outside_msk)
+                        gaussians.reset_roughness(exclusive_msk=roughness_mask)
 
                         gaussians.reset_refl()
                         

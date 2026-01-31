@@ -38,10 +38,10 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pip
         makedirs(refl_path, exist_ok=True)
 
     # save env light
-    if gaussians.env_map != None:
-        ltres = render_env_map(gaussians)
-        torchvision.utils.save_image(ltres['env_cood1'], os.path.join(model_path, 'light1_{}.png'.format(iteration)))
-        torchvision.utils.save_image(ltres['env_cood2'], os.path.join(model_path, 'light2_{}.png'.format(iteration)))
+    # if gaussians.env_map != None:
+    #     ltres = render_env_map(gaussians)
+    #     torchvision.utils.save_image(ltres['env_cood1'], os.path.join(model_path, 'light1_{}.png'.format(iteration)))
+    #     torchvision.utils.save_image(ltres['env_cood2'], os.path.join(model_path, 'light2_{}.png'.format(iteration)))
 
     visible_gaussians_ = torch.zeros_like(gaussians.get_opacity)
 
