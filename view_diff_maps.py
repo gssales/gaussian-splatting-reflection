@@ -17,7 +17,7 @@ import torchvision.transforms.functional as tf
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
 from utils.image_utils import psnr_map, to_3ch, colormap, gradient_map
-from utils.mae_utils import compute_mae
+from utils.mae_utils import angular_error_map, compute_mae
 from argparse import ArgumentParser
 import traceback
 
@@ -127,28 +127,29 @@ def evaluate(model_path, args):
                 tiles.append(to_3ch(l1_map_ / l1_map_.max()))
 
                 if args.eval_normals:
-                    normal_gt = normal_gts[idx]
+                    normal_gt = normal_gts[idx][0]
                     normal_gt = (normal_gt-0.5)*2
 
-                    normal_render = normal_renders[idx]
+                    normal_render = normal_renders[idx][0]
                     normal_render = (normal_render-0.5)*2
 
-                    angular_error = compute_mae(normal_render, normal_gt)
+                    angular_error = angular_error_map(normal_render, normal_gt)
 
                     mean_angular_error = angular_error.mean().item()
                     std_angular_error = angular_error.std().item()
                     min_angular_error = angular_error.min().item()
                     max_angular_error = angular_error.max().item()
-                    if len(alphas) > idx:
-                        alpha = alphas[idx][0,0,:,:]
-                        angular_error[alpha < 0.01] = 0
+                    # if len(alphas) > idx:
+                    #     alpha = alphas[idx][0,0,:,:]
+                    #     print(alpha.shape, angular_error.shape)
+                    #     angular_error[alpha < 0.01] = 0
 
-                        angular_error_window = angular_error[alpha >= 0.01]
-                        mean_angular_error = angular_error_window.mean().item()
-                        std_angular_error = angular_error_window.std().item()
-                        min_angular_error = angular_error_window.min().item()
-                        max_angular_error = angular_error_window.max().item()
-                        print(angular_error_window.min(), angular_error_window.max(), angular_error_window.mean(), angular_error_window.std())
+                    #     angular_error_window = angular_error[alpha >= 0.01]
+                    #     mean_angular_error = angular_error_window.mean().item()
+                    #     std_angular_error = angular_error_window.std().item()
+                    #     min_angular_error = angular_error_window.min().item()
+                    #     max_angular_error = angular_error_window.max().item()
+                    #     print(angular_error_window.min(), angular_error_window.max(), angular_error_window.mean(), angular_error_window.std())
                     
                     #using mean and std to normalize angular error map
                     # angular_error[angular_error > mean_angular_error] = 0.0
