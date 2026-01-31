@@ -56,19 +56,6 @@ def pick_best_key(results: dict):
     return best
 
 
-def is_valid_scene_path(scene_dir: Path):
-    """
-    Validate the last 3 components are: <env_shape>/<density>/<material>
-    under .../camera_regular/...
-    """
-    parts = scene_dir.parts
-    # ... camera_regular env density material
-    if len(parts) < 4:
-        return False
-    env, dens, mat = parts[-3], parts[-2], parts[-1]
-    return (env in ENV_SHAPES) and (dens in DENSITIES) and (mat in MATERIALS)
-
-
 def find_scene_dirs(base_path: Path):
     if (base_path / "cfg_args").exists():
         return [base_path]
