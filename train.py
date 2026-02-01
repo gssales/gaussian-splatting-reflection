@@ -201,7 +201,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # if iteration == 10000 or iteration == 15000 or iteration == 20000 or iteration == 25000:
             #     gaussians.up_env_map_max_level(gaussians.env_map.max_level +1)
 
-            if iteration > 40000:
+            if iteration > opt.iterations - 5000:
                 gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
@@ -379,10 +379,11 @@ def progress_report(
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = viewpoint.gt_alpha_mask
 
                     image = image * alpha + (1-alpha) * bg[:, None, None]
                     if gt_alpha_mask is not None:
+                        gt_alpha_mask = torch.clamp(gt_alpha_mask.to("cuda"), 0.0, 1.0)
                         gt_alpha_mask = gt_alpha_mask.cuda()
                         gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
 
@@ -488,10 +489,11 @@ def training_report(
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = viewpoint.gt_alpha_mask
 
                     image = image * alpha + (1-alpha) * bg[:, None, None]
                     if gt_alpha_mask is not None:
+                        gt_alpha_mask = torch.clamp(gt_alpha_mask.to("cuda"), 0.0, 1.0)
                         gt_alpha_mask = gt_alpha_mask.cuda()
                         gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
 
