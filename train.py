@@ -136,6 +136,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             refl_msk_loss = refls[get_outside_msk()].mean()
             loss += refl_mask_loss_weight * refl_msk_loss
 
+            roughs = gaussians.get_roughness
+            rough_msk_loss = roughs[get_outside_msk()].mean()
+            loss += refl_mask_loss_weight * rough_msk_loss
+
          # regularization
         if not opt.disable_normal_consistentcy_loss:
             lambda_normal = opt.lambda_normal if opt.init_until_iter < iteration else 0.0
