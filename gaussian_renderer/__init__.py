@@ -150,7 +150,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         
     # refl_strengths = pc.get_refl
     refl_strengths = pc.get_refl
-    iors = torch.zeros_like(refl_strengths) + 1.5
+    iors = pc.get_ior
 
     base_color, radii, allmap, refl_strength_map, ior_map, is_rendered = rasterizer(
         means3D = means3D,
@@ -226,7 +226,8 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
 
         refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
         rays_d = sample_camera_rays(viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T)
-        fresnel_refl = fresnel(rays_d, render_normal, ior_map)
+        detached_render_normal = render_normal.clone().detach()
+        fresnel_refl = fresnel(rays_d, detached_render_normal, ior_map)
 
         if third_stage:
             reflectance = refl_strength_map + (1 - refl_strength_map) * fresnel_refl
