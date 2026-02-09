@@ -316,6 +316,9 @@ renderCUDA(
 	float C[CHANNELS] = { 0 };
 	float refl_strength = 0.0f;
 	float mask = 0.0f;
+#if RENDER_AXUTILITY
+	float counter = 0.0f;
+#endif
 
 
 #if RENDER_AXUTILITY
@@ -449,6 +452,10 @@ renderCUDA(
 			// pixel.
 			last_contributor = contributor;
 
+#if COUNT_CONTRIBUTOR
+			counter += 1.0f;
+#endif
+
 			// mark Gaussians that contribute to image
 			if (!apply_mask || img_mask[H * W + pix_id] == 1.0)
 				atomicExch(&is_rendered[collected_id[j]], 1);
@@ -476,6 +483,9 @@ renderCUDA(
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		out_others[pix_id + MASK_OFFSET * H * W] = mask;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
+#endif
+#if COUNT_CONTRIBUTOR
+		out_others[pix_id + COUNTER_OFFSET * H * W] = counter;
 #endif
 	}
 }

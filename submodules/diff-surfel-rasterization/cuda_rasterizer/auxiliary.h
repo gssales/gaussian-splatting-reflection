@@ -26,7 +26,10 @@
 #define MIDDEPTH_OFFSET 5
 #define DISTORTION_OFFSET 6
 #define MASK_OFFSET 7
+// #define COUNTER_OFFSET 8
 // #define MEDIAN_WEIGHT_OFFSET 7
+
+// #define COUNT_CONTRIBUTOR 1
 
 // distortion helper macros
 #define BACKFACE_CULL 1
