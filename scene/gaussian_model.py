@@ -225,8 +225,12 @@ class GaussianModel:
                                                     max_steps=training_args.rotation_lr_max_steps)
 
     def freeze_xyz(self):
+        for param_group in self.optimizer.param_groups:
+            if param_group["name"] in ["xyz", "rotation", "scaling"]:
+                param_group['lr'] = 0.0
         self._xyz.requires_grad = False
         self._rotation.requires_grad = False
+        self._scaling.requires_grad = False
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''

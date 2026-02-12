@@ -206,8 +206,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # if iteration == densify_until_iteration or iteration == 45000:
             #     gaussians.double_env_map()
 
-            # if iteration > densify_until_iteration*2:
-            #     gaussians.freeze_xyz()
+            if iteration > 15000:
+                gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
             #     gaussians.filter_env_map()
