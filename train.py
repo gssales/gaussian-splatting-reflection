@@ -559,7 +559,9 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--auto_test", action="store_true", help="If set, test iterations will be set to every 5000 iterations.")
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--progress_report_iterations", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
@@ -572,7 +574,9 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    progress_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+    progress_iterations = [] #500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+    if args.auto_test:
+        args.test_iterations = [5, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
