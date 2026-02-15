@@ -438,6 +438,11 @@ def training_report(
         tb_writer.add_scalar('iter_time', elapsed, iteration)
         tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+        tb_writer.add_histogram("scene/refl_histogram", scene.gaussians.get_refl, iteration)
+        max_scale = torch.max(scene.gaussians.get_scaling, dim=1).values
+        min_scale = torch.min(scene.gaussians.get_scaling, dim=1).values
+        tb_writer.add_histogram("scene/max_scale", max_scale, iteration)
+        tb_writer.add_histogram("scene/min_scale", min_scale, iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -540,9 +545,9 @@ def training_report(
                     iteration,
                 )
 
-        if tb_writer:
-            tb_writer.flush()
-        torch.cuda.empty_cache()
+    if tb_writer:
+        tb_writer.flush()
+    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     # Set up command line argument parser
