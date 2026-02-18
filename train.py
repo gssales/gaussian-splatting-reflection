@@ -232,28 +232,28 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     opacity_reset_0 = True
                     gaussians.reset_opacity()
                 
-            if opt.opac_lr0_interval > 0 and (iteration-500) % opt.opac_lr0_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter): ## 200->50
-                gaussians.set_opacity_lr(opt.opacity_lr)
+                if opt.opac_lr0_interval > 0 and (iteration-500) % opt.opac_lr0_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter): ## 200->50
+                    gaussians.set_opacity_lr(opt.opacity_lr)
 
-            if (iteration-500) % opt.normal_prop_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter):
-                if not opacity_reset_0 and opt.disable_normal_propagation:
-                    outside_msk = get_outside_msk()
-                    opacity_old = gaussians.get_opacity
-                    opac_mask = (opacity_old > 0.9).flatten()
-                    if outside_msk is not None:
-                        opac_mask = torch.logical_or(opac_mask, outside_msk)
-                    gaussians.reset_opacity(reset_value=0.9, exclusive_msk=opac_mask)
+                if (iteration-500) % opt.normal_prop_interval == 0 and (opt.init_until_iter < iteration <= normal_prop_until_iter):
+                    if not opacity_reset_0 and not opt.disable_normal_propagation:
+                        outside_msk = get_outside_msk()
+                        opacity_old = gaussians.get_opacity
+                        opac_mask = (opacity_old > 0.9).flatten()
+                        if outside_msk is not None:
+                            opac_mask = torch.logical_or(opac_mask, outside_msk)
+                        gaussians.reset_opacity(reset_value=0.9, exclusive_msk=opac_mask)
 
-                    refl = gaussians.get_refl
-                    scale_mask = (refl < 0.02).flatten()
-                    if outside_msk is not None:
-                        scale_mask = torch.logical_or(scale_mask, outside_msk)
-                    gaussians.reset_scale(enlarge_scale=1.5, exclusive_msk=scale_mask)
+                        refl = gaussians.get_refl
+                        scale_mask = (refl < 0.02).flatten()
+                        if outside_msk is not None:
+                            scale_mask = torch.logical_or(scale_mask, outside_msk)
+                        gaussians.reset_scale(enlarge_scale=1.5, exclusive_msk=scale_mask)
 
-                    gaussians.reset_refl()
-                    
-                    if opt.opac_lr0_interval > 0 and iteration != normal_prop_until_iter:
-                        gaussians.set_opacity_lr(0.0)
+                        gaussians.reset_refl()
+                        
+                        if opt.opac_lr0_interval > 0 and iteration != normal_prop_until_iter:
+                            gaussians.set_opacity_lr(0.0)
 
             if (iteration-500) % opt.color_sabotage_interval == 0 and (opt.init_until_iter < iteration <= color_sabotage_until_iter):
                 if not opt.disable_color_sabotage:
