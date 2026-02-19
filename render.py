@@ -45,12 +45,8 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pip
 
     visible_gaussians_ = torch.zeros_like(gaussians.get_opacity)
 
-    render_times = []
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        t1 = time.time()
         render_pkg = render(view, gaussians, pipeline, background)
-        render_time = time.time() - t1
-        render_times.append(render_time)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         gt = view.original_image[0:3, :, :]
 
@@ -70,12 +66,6 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, pip
         if render_refl:
             refl = render_pkg["refl_strength_map"].repeat(3,1,1)
             torchvision.utils.save_image(refl, os.path.join(refl_path, '{0:05d}'.format(idx) + ".png"))
-
-    with open(model_path + "/fps.txt", 'w') as fp:
-        fps = 1.0/np.array(render_times).mean()
-        fp.write('fps:{}\n'.format(fps))
-        fp.write('count:{}\n'.format(len(gaussians.get_xyz)))
-
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, render_normals : bool, render_refl : bool):
     with torch.no_grad():

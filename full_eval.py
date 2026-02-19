@@ -24,7 +24,9 @@ glossy_synthetic_scenes = ["GlossySynthetic/angel","GlossySynthetic/bell","Gloss
 parser = ArgumentParser(description="Full evaluation script parameters")
 parser.add_argument("--skip_training", action="store_true")
 parser.add_argument("--skip_rendering", action="store_true")
+parser.add_argument("--skip_fps", action="store_true")
 parser.add_argument("--skip_metrics", action="store_true")
+parser.add_argument("--skip_collect_results", action="store_true")
 parser.add_argument("--output_path", default="/mnt/output/ours/eval")
 parser.add_argument('--source', type=str, default="/mnt/data")
 args, _ = parser.parse_known_args()
@@ -97,6 +99,15 @@ if not args.skip_rendering:
             file.write(render_command)
 
         os.system(render_command)
+        
+if not args.skip_fps:
+    print("Starting FPS evaluation for all scenes...")
+
+    for scene in all_scenes:
+        print("FPS eval scene:", scene)            
+        output_path = os.path.join(args.output_path, scene)
+        fps_eval_command = "python eval_fps.py -m " + output_path
+        os.system(fps_eval_command)
 
 if not args.skip_metrics:
     print("Starting metrics computation for all scenes...")
@@ -105,3 +116,11 @@ if not args.skip_metrics:
         scenes_string += "\"" + args.output_path + "/" + scene + "\" "
 
     os.system("python metrics.py -m " + scenes_string)
+
+if not args.skip_collect_results:
+    output_path = args.output_path
+    print("Collecting results in:", output_path)
+    collect_command = "python collect_results.py --tsv --output_path " + output_path
+    os.system(collect_command)
+
+print("Done with full evaluation for all scenes!")
