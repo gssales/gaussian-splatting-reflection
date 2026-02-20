@@ -120,7 +120,7 @@ class OptimizationParams(ParamGroup):
         self.random_background_color = False
 
         self.normal_prop_interval = 1000
-        self.normal_prop_until_iter = 12_000
+        self.normal_prop_until_iter = 24_000
         
         self.color_sabotage_interval = 1000
         self.color_sabotage_until_iter = 24_000
