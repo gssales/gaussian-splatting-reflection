@@ -356,7 +356,7 @@ def progress_report(
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = viewpoint.gt_alpha_mask
 
                     image = image * alpha + (1-alpha) * bg[:, None, None]
                     if gt_alpha_mask is not None:
