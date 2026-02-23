@@ -107,7 +107,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             background = torch.rand(3, dtype=torch.float32, device="cuda")
 	
         # Render
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, initial_stage=iteration<opt.init_until_iter, third_stage=iteration>=15_000, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background, initial_stage=iteration<opt.init_until_iter, third_stage=iteration>=opt.ior_from_iter, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)
         image, viewspace_point_tensor, visibility_filter, radii, alpha = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["rend_alpha"]
         env_scope_mask = render_pkg["env_scope_mask"]
 
@@ -195,8 +195,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'total_loss': loss.item()
             }
             bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, third_stage=iteration>=15_000)
-            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path, third_stage=iteration>=15_000)
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, third_stage=iteration>=opt.ior_from_iter)
+            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path, third_stage=iteration>=opt.ior_from_iter)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
