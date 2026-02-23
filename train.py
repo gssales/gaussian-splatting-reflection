@@ -472,7 +472,6 @@ def training_report(
                     render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=initial_stage, third_stage=third_stage, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
-                    base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     gt_alpha_mask = viewpoint.gt_alpha_mask
 
