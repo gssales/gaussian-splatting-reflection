@@ -195,19 +195,19 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 'total_loss': loss.item()
             }
             bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
-            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, third_stage=iteration>=15_000)
+            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path, third_stage=iteration>=15_000)
 
             if iteration % 10000 == 0:
                 os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
                 for i in range(6):
                     torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, 'cubemap/{}_{}.png'.format(i, iteration)))
 
-            # if iteration == densify_until_iteration or iteration == 45000:
-            #     gaussians.double_env_map()
+            if iteration == densify_until_iteration or iteration == 45000:
+                gaussians.double_env_map()
 
-            # if iteration > 15000:
-            #     gaussians.freeze_xyz()
+            if iteration > densify_until_iteration*2:
+                gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
             #     gaussians.filter_env_map()
@@ -334,6 +334,7 @@ def progress_report(
     renderArgs,
     bg,
     initial_stage,
+    third_stage,
     model_path,
 ):
     if iteration in progress_iterations:
@@ -352,7 +353,7 @@ def progress_report(
                 os.makedirs(base_save_dir, exist_ok=True)
                 
                 for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage, third_stage=third_stage)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
@@ -440,6 +441,7 @@ def training_report(
     renderArgs,
     bg,
     initial_stage,
+    third_stage,
 ):
     if tb_writer:
         for tag,loss in train_loss_report.items():
@@ -467,7 +469,7 @@ def training_report(
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=False, third_stage=True, *renderArgs)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, initial_stage=initial_stage, third_stage=third_stage, *renderArgs)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
@@ -498,7 +500,7 @@ def training_report(
                         )
 
                         try:
-                            refl_map = render_pkg['refl_strength_map']
+                            refl_map = render_pkg['reflectance']
                             rend_alpha = render_pkg['rend_alpha']
                             rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
                             surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
