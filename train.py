@@ -206,8 +206,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # if iteration == densify_until_iteration or iteration == 45000:
             #     gaussians.double_env_map()
 
-            if iteration > 15000:
-                gaussians.freeze_xyz()
+            # if iteration > 15000:
+            #     gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
             #     gaussians.filter_env_map()
@@ -472,7 +472,7 @@ def training_report(
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = viewpoint.gt_alpha_mask
 
                     image = image * alpha + (1-alpha) * bg[:, None, None]
                     if gt_alpha_mask is not None:
@@ -583,9 +583,9 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    progress_iterations = [] #500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+    progress_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
     if args.auto_test:
-        args.test_iterations = [5, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+        args.test_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:

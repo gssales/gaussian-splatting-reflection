@@ -365,7 +365,7 @@ renderCUDA(
 
 			accum_ior_rec = last_alpha * accum_ior_rec + (1.f - last_alpha) * accum_ior_rec;
 			last_ior = collected_iors[j];
-			dL_dalpha += (collected_iors[j] - accum_ior_rec) * dL_dior;
+			// dL_dalpha += (collected_iors[j] - accum_ior_rec) * dL_dior;
 			atomicAdd(&(dL_diors[global_id]), dchannel_dcolor * dL_dior);
 
 			float dL_dz = 0.0f;

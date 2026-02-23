@@ -111,7 +111,7 @@ class OptimizationParams(ParamGroup):
         self.init_until_iter = 500
         self.feature_rest_from_iter = 7_000
         self.opac_lr0_interval = 200
-        self.densification_interval_when_prop = 100
+        self.densification_interval_when_prop = 500
         self.longer_prop_iter = 0
 
         self.use_env_scope = False
