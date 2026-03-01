@@ -12,6 +12,7 @@
 import torch
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+import torchvision
 
 def mse(img1, img2):
     return (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
@@ -77,6 +78,22 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
     if net_image.shape[0]==1:
         net_image = colormap(net_image)
     return net_image
+
+def plot_cubemap(textures) -> torch.Tensor:
+    # _textures = textures.permute(0,3,1,2)
+    cubemap_grid = [None]*10
+    cubemap_grid[1] = torch.flip(textures[3], [1])
+    cubemap_grid[4] = textures[1]
+    cubemap_grid[5] = textures[4]
+    cubemap_grid[6] = textures[0]
+    cubemap_grid[7] = textures[5]
+    cubemap_grid[9] = textures[2]
+    cubemap_grid[0] = torch.zeros_like(textures[0])  # placeholder
+    cubemap_grid[2] = torch.zeros_like(textures[0])  # placeholder
+    cubemap_grid[3] = torch.zeros_like(textures[0])  # placeholder
+    cubemap_grid[8] = torch.zeros_like(textures[0])  # placeholder
+
+    return torchvision.utils.make_grid(cubemap_grid, nrow=4, padding=0)
 
 def to_3ch(t: torch.Tensor) -> torch.Tensor:
     """

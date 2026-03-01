@@ -19,7 +19,7 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr, render_net_image
+from utils.image_utils import plot_cubemap, psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import traceback
@@ -138,7 +138,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
          # regularization
         if not opt.disable_normal_consistentcy_loss:
-            lambda_normal = opt.lambda_normal if opt.init_until_iter < iteration else 0.0
+            lambda_normal = opt.lambda_normal #if opt.init_until_iter < iteration else 0.0
             rend_normal  = render_pkg['rend_normal']
             surf_normal = render_pkg['surf_normal']
             normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
@@ -195,15 +195,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
             progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
 
-            if iteration % 10000 == 0:
-                os.makedirs(os.path.join(dataset.model_path, 'cubemap'), exist_ok = True)
-                for i in range(6):
-                    torchvision.utils.save_image(torch.sigmoid(gaussians.env_map.params['Cubemap_texture'][i]), os.path.join(dataset.model_path, 'cubemap/{}_{}.png'.format(i, iteration)))
-
-            if iteration == densify_until_iteration or iteration == 45000:
+            if iteration == densify_until_iteration:
                 gaussians.double_env_map()
 
-            if iteration > densify_until_iteration*2:
+            if iteration > opt.iterations - 5000:
                 gaussians.freeze_xyz()
 
             # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
@@ -335,11 +330,18 @@ def progress_report(
 ):
     if iteration in progress_iterations:
         torch.cuda.empty_cache()
-        test_cam_interval = 5 if len(scene.getTestCameras()) > 30 else 1
-        validation_configs = ({'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())] for idx in range(test_cam_interval-1, len(scene.getTestCameras()), test_cam_interval)]}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(4, len(scene.getTrainCameras()), 5)]})
+        validation_configs = ({'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())] for idx in range(0, len(scene.getTestCameras()), 5)]}, 
+                              {'name': 'train', 'cameras' : []})
+        
+        cubemap_dir = os.path.join(model_path, 'progress/cubemaps')
+        os.makedirs(cubemap_dir, exist_ok=True)
+        
+        textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
+        grid = plot_cubemap(textures)
+        cubemap_name = f"cubemap_{iteration}.png"
+        save_path = os.path.join(cubemap_dir, cubemap_name)
+        save_image(grid, save_path)
 
-        torch.cuda.empty_cache()
         for config in validation_configs:
             config_name = config['name']
             if config['cameras'] and len(config['cameras']) > 0:
@@ -437,6 +439,9 @@ def training_report(
             tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
         tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+
+    # Report test and samples of training set
+    if iteration in testing_iterations:
         tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
         tb_writer.add_histogram("scene/refl_histogram", scene.gaussians.get_refl, iteration)
         max_scale = torch.max(scene.gaussians.get_scaling, dim=1).values
@@ -444,8 +449,10 @@ def training_report(
         tb_writer.add_histogram("scene/max_scale", max_scale, iteration)
         tb_writer.add_histogram("scene/min_scale", min_scale, iteration)
 
-    # Report test and samples of training set
-    if iteration in testing_iterations:
+        textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
+        grid = plot_cubemap(textures)
+        tb_writer.add_image("env_cubemap", grid, iteration)
+
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, len(scene.getTrainCameras()), 5)]})
@@ -461,9 +468,8 @@ def training_report(
                     render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
-                    base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = viewpoint.gt_alpha_mask
 
                     image = image * alpha + (1-alpha) * bg[:, None, None]
                     if gt_alpha_mask is not None:
@@ -489,11 +495,18 @@ def training_report(
                         )
 
                         try:
+                            base_color_map = render_pkg["base_color_map"]
                             refl_map = render_pkg['refl_strength_map']
                             rend_alpha = render_pkg['rend_alpha']
+                            rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
                             rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
                             surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
 
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/base_color",
+                                base_color_map[None],
+                                global_step=iteration,
+                            )
                             tb_writer.add_images(
                                 f"{config_name}_view_{viewpoint.image_name}/rend_normal",
                                 rend_normal[None],
@@ -574,9 +587,10 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    progress_iterations = [] #500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+    progress_iterations = []
     if args.auto_test:
-        args.test_iterations = [5, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+        progress_iterations = []#500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+        args.test_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
