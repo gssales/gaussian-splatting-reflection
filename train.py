@@ -348,7 +348,7 @@ def progress_report(
         cubemap_dir = os.path.join(model_path, 'progress/cubemaps')
         os.makedirs(cubemap_dir, exist_ok=True)
         
-        textures = torch.sigmoid(scene.gaussians.env_map.texture)
+        textures = torch.sigmoid(scene.gaussians.env_map.texture[0])
         grid = plot_cubemap(textures)
         cubemap_name = f"cubemap_{iteration}.png"
         save_path = os.path.join(cubemap_dir, cubemap_name)
@@ -466,7 +466,7 @@ def training_report(
         tb_writer.add_histogram("scene/max_scale", max_scale, iteration)
         tb_writer.add_histogram("scene/min_scale", min_scale, iteration)
 
-        textures = torch.sigmoid(scene.gaussians.env_map.texture)
+        textures = torch.sigmoid(scene.gaussians.env_map.texture[0])
         grid = plot_cubemap(textures)
         tb_writer.add_image("env_cubemap", grid, iteration)
 
@@ -499,7 +499,7 @@ def training_report(
                         depth = render_pkg["surf_depth"]
                         norm = depth.max()
                         depth = depth / norm
-                        depth = colormap(depth.detach().cpu().numpy()[0], cmap='turbo')
+                        depth = img_colormap(depth.detach().cpu()[0], cmap='turbo')
 
                         tb_writer.add_images(
                             f"{config_name}_view_{viewpoint.image_name}/depth",
@@ -517,7 +517,7 @@ def training_report(
                             refl_map = render_pkg['refl_strength_map']
                             roughness_map = render_pkg['roughness_map']
                             rend_alpha = render_pkg['rend_alpha']
-                            rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
+                            rend_alpha = img_colormap(rend_alpha.detach().cpu()[0], cmap='turbo')
                             rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
                             surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
 
