@@ -515,6 +515,7 @@ def training_report(
                         try:
                             base_color_map = render_pkg["base_color_map"]
                             refl_map = render_pkg['refl_strength_map']
+                            roughness_map = render_pkg['roughness_map']
                             rend_alpha = render_pkg['rend_alpha']
                             rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
                             rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
@@ -543,6 +544,11 @@ def training_report(
                             tb_writer.add_images(
                                 f"{config_name}_view_{viewpoint.image_name}/refl_map",
                                 refl_map[None],
+                                global_step=iteration,
+                            )
+                            tb_writer.add_images(
+                                f"{config_name}_view_{viewpoint.image_name}/roughness_map",
+                                roughness_map[None],
                                 global_step=iteration,
                             )
                         except Exception:
