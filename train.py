@@ -607,7 +607,7 @@ if __name__ == "__main__":
 
     progress_iterations = []
     if args.auto_test:
-        progress_iterations = []#500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
+        progress_iterations = [] #500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
         args.test_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
 
     # Start GUI server, configure and run training
