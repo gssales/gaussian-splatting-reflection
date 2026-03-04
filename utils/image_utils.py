@@ -82,7 +82,7 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
     return net_image
 
 def plot_cubemap(textures) -> torch.Tensor:
-    # _textures = textures.permute(0,3,1,2)
+    textures = textures.permute(0,3,1,2)
     cubemap_grid = [None]*10
     cubemap_grid[1] = torch.flip(textures[3], [1])
     cubemap_grid[4] = textures[1]

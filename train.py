@@ -348,7 +348,7 @@ def progress_report(
         cubemap_dir = os.path.join(model_path, 'progress/cubemaps')
         os.makedirs(cubemap_dir, exist_ok=True)
         
-        textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
+        textures = torch.sigmoid(scene.gaussians.env_map.texture)
         grid = plot_cubemap(textures)
         cubemap_name = f"cubemap_{iteration}.png"
         save_path = os.path.join(cubemap_dir, cubemap_name)
@@ -466,7 +466,7 @@ def training_report(
         tb_writer.add_histogram("scene/max_scale", max_scale, iteration)
         tb_writer.add_histogram("scene/min_scale", min_scale, iteration)
 
-        textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
+        textures = torch.sigmoid(scene.gaussians.env_map.texture)
         grid = plot_cubemap(textures)
         tb_writer.add_image("env_cubemap", grid, iteration)
 
