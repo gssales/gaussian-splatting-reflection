@@ -23,6 +23,7 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 from cubemapencoder import CubemapEncoder
 from PIL import Image
 from utils.general_utils import PILtoTorch
+from utils.sh_utils import eval_sh
 from kornia.filters import UnsharpMask
 import torchvision
 from torchvision.transforms import functional as F
@@ -159,8 +160,9 @@ class GaussianModel:
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
-        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
+        features = torch.zeros((fused_color.shape[0], 4, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
+        features[:, 3, 0] = RGB2SH(torch.tensor(init_refl_value).float().cuda())
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
@@ -271,6 +273,15 @@ class GaussianModel:
             refl_new[exclusive_msk] = self._refl_strength[exclusive_msk]
         optimizable_tensors = self.replace_tensor_to_optimizer(refl_new, "refl")
         self._refl_strength = optimizable_tensors["refl"]
+        
+    def reset_sh_refl(self, exclusive_msk = None):
+        dcc = self._features_dc.clone() # [P, 1, 4] where 4 is RGB and reflectance
+        dist_dcc = torch.max(dcc, RGB2SH((torch.ones_like(dcc)*self.init_refl_value).float().cuda()))
+        dist_dcc[:, :, 3:4] = dcc[:, :, 3:4] # replace only the reflectance channel, not the RGB channels
+        if exclusive_msk is not None:
+            dist_dcc[exclusive_msk] = dcc[exclusive_msk]
+        optimizable_tensors = self.replace_tensor_to_optimizer(dist_dcc, "f_dc")
+        self._features_dc = optimizable_tensors["f_dc"]
 
     def reset_opacity(self, reset_value=0.01, exclusive_msk = None):
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*reset_value))
@@ -287,6 +298,15 @@ class GaussianModel:
         optimizable_tensors = self.replace_tensor_to_optimizer(dist_dcc, "f_dc")
         self._features_dc = optimizable_tensors["f_dc"]
 
+    def dist_color_rgb(self, noise_range=0.4, exclusive_msk = None):
+        dcc = self._features_dc.clone() # [P, 1, 4] where 4 is RGB and reflectance
+        dist_dcc = dcc + (torch.rand_like(dcc) * noise_range * 2 - noise_range )
+        dist_dcc[:, :, :3] = dcc[:, :, :3] # only disturb the RGB channels, not the reflectance
+        if exclusive_msk is not None:
+            dist_dcc[exclusive_msk] = dcc[exclusive_msk]
+        optimizable_tensors = self.replace_tensor_to_optimizer(dist_dcc, "f_dc")
+        self._features_dc = optimizable_tensors["f_dc"]
+
     def reset_scale(self, enlarge_scale=1.5, exclusive_msk = None):
         scales = self.get_scaling
         min_axis_id = torch.argmin(scales, dim = -1, keepdim=True)
@@ -297,6 +317,16 @@ class GaussianModel:
         optimizable_tensors = self.replace_tensor_to_optimizer(scale_new, "scaling")
         self._scaling = optimizable_tensors["scaling"]
 
+    def sh4_refl(self, viewpoint_cam):
+        features = self.get_features.clone()
+        means3D = self.get_xyz.clone()
+        features = features.transpose(1, 2).view(-1, 4, (self.max_sh_degree+1)**2)
+        dirs = (means3D - viewpoint_cam.camera_center.repeat(features.shape[0], 1)).detach()
+        dirs = dirs / torch.norm(dirs, dim=-1, keepdim=True)
+        colors = eval_sh(self.active_sh_degree, features, dirs)
+        colors = torch.clamp_min(colors + 0.5, 0.0)
+        return colors[:, 3:4]
+
     def load_ply(self, path):
         plydata = PlyData.read(path)
 
@@ -306,19 +336,20 @@ class GaussianModel:
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
         refls = np.asarray(plydata.elements[0]["refl"])[..., np.newaxis]
 
-        features_dc = np.zeros((xyz.shape[0], 3, 1))
+        features_dc = np.zeros((xyz.shape[0], 4, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
         features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
         features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+        features_dc[:, 3, 0] = np.asarray(plydata.elements[0]["f_dc_3"])
 
         extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
         extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
-        assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+        assert len(extra_f_names)==4*(self.max_sh_degree + 1) ** 2 - 4
         features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
         for idx, attr_name in enumerate(extra_f_names):
             features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
         # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+        features_extra = features_extra.reshape((features_extra.shape[0], 4, (self.max_sh_degree + 1) ** 2 - 1))
 
         scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
         scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))

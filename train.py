@@ -50,10 +50,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     tb_writer = prepare_output_and_logger(dataset)
 
     densify_until_iteration = opt.densify_until_iter + opt.longer_prop_iter
-    if not opt.disable_normal_propagation:
-        normal_prop_until_iter = opt.normal_prop_until_iter + opt.longer_prop_iter
-    if not opt.disable_color_sabotage:
-        color_sabotage_until_iter = opt.color_sabotage_until_iter + opt.longer_prop_iter
+    # if not opt.disable_normal_propagation:
+    normal_prop_until_iter = opt.normal_prop_until_iter + opt.longer_prop_iter
+    # if not opt.disable_color_sabotage:
+    color_sabotage_until_iter = opt.color_sabotage_until_iter + opt.longer_prop_iter
     
     if opt.use_env_scope:
         center = [float(c) for c in opt.env_scope_center]
@@ -135,6 +135,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             refls = gaussians.get_refl
             refl_msk_loss = refls[get_outside_msk()].mean()
             loss += refl_mask_loss_weight * refl_msk_loss
+
+            sh4_ = gaussians.sh4_refl(viewpoint_cam)
+            sh4_msk_loss = sh4_[get_outside_msk()].mean()
+            loss += refl_mask_loss_weight * sh4_msk_loss
 
          # regularization
         if not opt.disable_normal_consistentcy_loss:
@@ -239,25 +243,25 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                             opac_mask = torch.logical_or(opac_mask, outside_msk)
                         gaussians.reset_opacity(reset_value=0.9, exclusive_msk=opac_mask)
 
-                        refl = gaussians.get_refl
+                        refl = gaussians.sh4_refl(viewpoint_cam)
                         scale_mask = (refl < 0.02).flatten()
                         if outside_msk is not None:
                             scale_mask = torch.logical_or(scale_mask, outside_msk)
                         gaussians.reset_scale(enlarge_scale=1.5, exclusive_msk=scale_mask)
 
-                        gaussians.reset_refl()
+                        gaussians.reset_sh_refl()
                         
                         if opt.opac_lr0_interval > 0 and iteration != normal_prop_until_iter:
                             gaussians.set_opacity_lr(0.0)
 
             if (iteration-500) % opt.color_sabotage_interval == 0 and (opt.init_until_iter < iteration <= color_sabotage_until_iter):
                 if not opt.disable_color_sabotage:
-                    refl = gaussians.get_refl
+                    refl = gaussians.sh4_refl(viewpoint_cam)
                     color_mask = (refl > 0.1).flatten()                        
                     outside_msk = get_outside_msk()
                     if outside_msk is not None:
                         color_mask = torch.logical_or(color_mask, outside_msk)
-                    gaussians.dist_color(exclusive_msk=color_mask)
+                    gaussians.dist_color_rgb(exclusive_msk=color_mask)
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -355,7 +359,7 @@ def progress_report(
                     image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
+                    gt_alpha_mask = viewpoint.gt_alpha_mask
 
                     image = image * alpha + (1-alpha) * bg[:, None, None]
                     if gt_alpha_mask is not None:

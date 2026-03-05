@@ -63,9 +63,9 @@ RasterizeGaussiansCUDA(
 	const bool apply_mask,
 	const bool slice)
 {
-  if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
-	AT_ERROR("means3D must have dimensions (num_points, 3)");
-  }
+  // if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
+	// AT_ERROR("means3D must have dimensions (num_points, 3)");
+  // }
 
   // P is amount of points
   const int P = means3D.size(0);
@@ -215,7 +215,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   torch::Tensor dL_dnormal = torch::zeros({P, 3}, means3D.options());
   torch::Tensor dL_dopacity = torch::zeros({P, 1}, means3D.options());
   torch::Tensor dL_dtransMat = torch::zeros({P, 9}, means3D.options());
-  torch::Tensor dL_dsh = torch::zeros({P, M, 3}, means3D.options());
+  torch::Tensor dL_dsh = torch::zeros({P, M, NUM_CHANNELS}, means3D.options());
   torch::Tensor dL_dscales = torch::zeros({P, 2}, means3D.options());
   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
   
