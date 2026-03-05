@@ -57,6 +57,9 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
+    # bg_color is RGB, but rasterizer expects RGB and a channel with zero
+    bg_color = torch.cat([bg_color[:3], torch.zeros(1, device=bg_color.device)], dim=0)
+
     raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
@@ -139,6 +142,14 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         cov3D_precomp = cov3D_precomp,
         env_scope_mask = env_scope_mask
     )
+
+    # base_color [4, W, H] where 4 in RGB and reflectance
+    reflectance = base_color[3:4, :, :]
+    base_color = base_color[:3, :, :]
+    
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    # They will be excluded from value updates used in the splitting criteria.
+
     # additional regularizations
     render_alpha = allmap[1:2]
 
@@ -191,12 +202,13 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
             "gaussian_weights": gaussian_weights,
-            'env_scope_mask': mask
+            'env_scope_mask': mask,
+            "refl_strength_map": reflectance
         }
     else:
         refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
 
-        final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
+        final_image = (1-reflectance) * base_color + reflectance * refl_color
         # final_image = final_image.clamp(0, 1)
 
         out = {
@@ -210,7 +222,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
             'env_scope_mask': mask,
-            "refl_strength_map": refl_strength_map,
+            "refl_strength_map": reflectance,
             "refl_color_map": refl_color,
             "base_color_map": base_color,
             "gaussian_weights": gaussian_weights
