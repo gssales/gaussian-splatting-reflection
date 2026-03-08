@@ -49,6 +49,8 @@ def colormap(map, cmap="turbo"):
     return map
 
 def render_net_image(render_pkg, render_items, render_mode, camera):
+    if render_mode >= len(render_items):
+        render_mode = 0
     output = render_items[render_mode].lower()
     if output == 'alpha':
         net_image = render_pkg["rend_alpha"]

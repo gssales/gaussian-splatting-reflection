@@ -33,7 +33,7 @@ def process_scene(scene_dir: Path, dataset_dir: Path):
     cfg_args.source_path = str(dataset_dir) + cfg_args.source_path.split("/mnt/data")[-1].replace("/", "\\")    
     print(f"  [+] Updated source_path to: {cfg_args.source_path}")
 
-    cfg_args.white_background = True
+    cfg_args.white_background = False
 
     print(cfg_args.__dict__)
     with open(cfgfilepath, "w", encoding="utf-8") as f:
