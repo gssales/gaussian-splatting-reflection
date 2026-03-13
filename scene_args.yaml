@@ -2,6 +2,7 @@ data:
   realDatasets:
     - ref_real
     - envgs
+    - tant_intermediate
   syntheticDatasets:
     - shiny_blender
     - GlossySynthetic
@@ -16,4 +17,7 @@ args:
   ref_real/sedan: " -r 8 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138"
   ref_real/gardenspheres: " -r 6 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 0.974"
   ref_real/toycar: " -r 4 --env_scope_center 0.486 1.108 3.72 --env_scope_radius 2.507"
+  envgs/audi: " -r 4 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 4"
+  envgs/dog: " -r 4 --env_scope_center -0.2270 1.9700 1.7740 --env_scope_radius 5"
+  tant_intermediate/Family: " -r 4 --env_scope_center -0.032 0.808 0.751 --env_scope_radius 2.138"
   

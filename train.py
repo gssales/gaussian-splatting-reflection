@@ -220,7 +220,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     densification_interval = opt.densification_interval
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_mean, scene.cameras_extent, size_threshold)
                 
                 opacity_reset_0 = False
                 if iteration % opt.opacity_reset_interval == 0:
