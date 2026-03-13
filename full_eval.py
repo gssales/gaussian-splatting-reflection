@@ -15,7 +15,8 @@ import time
 import json
 import yaml
 
-ref_real_scenes = []#"ref_real/gardenspheres", "ref_real/sedan", "ref_real/toycar"]
+ref_real_scenes = ["ref_real/gardenspheres", "ref_real/sedan", "ref_real/toycar"]
+envgs_scenes = ["envgs/audi", "envgs/dog"]
 refnerf_scenes = ["shiny_blender/ball","shiny_blender/car","shiny_blender/coffee","shiny_blender/helmet","shiny_blender/teapot","shiny_blender/toaster"]
 nerf_synthetic_scenes = ["nerf_synthetic/chair","nerf_synthetic/drums","nerf_synthetic/ficus","nerf_synthetic/hotdog","nerf_synthetic/lego","nerf_synthetic/materials","nerf_synthetic/mic","nerf_synthetic/ship"]
 glossy_synthetic_scenes = ["GlossySynthetic/angel","GlossySynthetic/bell","GlossySynthetic/cat","GlossySynthetic/horse","GlossySynthetic/luyu","GlossySynthetic/potion","GlossySynthetic/tbell","GlossySynthetic/teapot"]
@@ -33,6 +34,7 @@ args, _ = parser.parse_known_args()
 
 all_scenes = []
 all_scenes.extend(ref_real_scenes)
+all_scenes.extend(envgs_scenes)
 all_scenes.extend(refnerf_scenes)
 all_scenes.extend(nerf_synthetic_scenes)
 all_scenes.extend(glossy_synthetic_scenes)

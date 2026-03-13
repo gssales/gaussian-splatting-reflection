@@ -14,6 +14,7 @@ import random
 import json
 
 import numpy as np
+import torch
 from utils.graphics_utils import BasicPointCloud
 from utils.sh_utils import SH2RGB
 from utils.system_utils import searchForMaxIteration
@@ -89,6 +90,7 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
+        self.cameras_mean = torch.tensor(scene_info.nerf_normalization["translate"], device="cuda")
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
