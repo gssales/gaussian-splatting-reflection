@@ -439,6 +439,7 @@ def training_report(
             tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
         tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+        tb_writer.add_scalar("scene/nan_scales", torch.sum(torch.isnan(scene.gaussians.get_scaling)).item(), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
