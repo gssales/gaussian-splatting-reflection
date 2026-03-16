@@ -164,9 +164,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
         if (iteration > 35000):
             tb_writer.add_scalar('nan_search/before_backprop', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
+            print("\nNaN scales before backprop:", torch.sum(torch.isnan(gaussians.get_scaling)).item())
         loss.backward()
         if (iteration > 35000):
             tb_writer.add_scalar('nan_search/after_backprop', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
+            print("\nNaN scales after backprop:", torch.sum(torch.isnan(gaussians.get_scaling)).item())
 
         iter_end.record()
 
