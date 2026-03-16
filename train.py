@@ -162,7 +162,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             dist_loss = 0
 
 
+        if (iteration > 35000):
+            tb_writer.add_scalar('nan_search/before_backprop', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
         loss.backward()
+        if (iteration > 35000):
+            tb_writer.add_scalar('nan_search/after_backprop', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
 
         iter_end.record()
 
@@ -220,7 +224,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     densification_interval = opt.densification_interval
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
+                    if (iteration > 35000):
+                        tb_writer.add_scalar('nan_search/before_densify_and_prune', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_mean, scene.cameras_extent, size_threshold)
+                    if (iteration > 35000):
+                        tb_writer.add_scalar('nan_search/after_densify_and_prune', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
                 
                 opacity_reset_0 = False
                 if iteration % opt.opacity_reset_interval == 0:
