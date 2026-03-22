@@ -161,15 +161,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         else:
             dist_loss = 0
 
-
-        if (iteration > 35000):
-            tb_writer.add_scalar('nan_search/before_backprop', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
-            print("\nNaN scales before backprop:", torch.sum(torch.isnan(gaussians.get_scaling)).item())
         loss.backward()
-        if (iteration > 35000):
-            tb_writer.add_scalar('nan_search/after_backprop', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
-            print("\nNaN scales after backprop:", torch.sum(torch.isnan(gaussians.get_scaling)).item())
-
         iter_end.record()
 
         with torch.no_grad():
@@ -226,11 +218,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     densification_interval = opt.densification_interval
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    if (iteration > 35000):
-                        tb_writer.add_scalar('nan_search/before_densify_and_prune', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
                     gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_mean, scene.cameras_extent, size_threshold)
-                    if (iteration > 35000):
-                        tb_writer.add_scalar('nan_search/after_densify_and_prune', torch.sum(torch.isnan(gaussians.get_scaling)).item(), iteration)
                 
                 opacity_reset_0 = False
                 if iteration % opt.opacity_reset_interval == 0:
@@ -449,16 +437,11 @@ def training_report(
             tb_writer.add_scalar('train_loss_patches/{}'.format(tag), loss, iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
         tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
-        tb_writer.add_scalar("scene/nan_scales", torch.sum(torch.isnan(scene.gaussians.get_scaling)).item(), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
         tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
         tb_writer.add_histogram("scene/refl_histogram", scene.gaussians.get_refl, iteration)
-        max_scale = torch.max(scene.gaussians.get_scaling, dim=1).values
-        min_scale = torch.min(scene.gaussians.get_scaling, dim=1).values
-        tb_writer.add_histogram("scene/max_scale", max_scale, iteration)
-        tb_writer.add_histogram("scene/min_scale", min_scale, iteration)
 
         textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
         grid = plot_cubemap(textures)
