@@ -210,6 +210,40 @@ def load_img(pth: str) -> np.ndarray:
     image = np.array(Image.open(f), dtype=np.float32)
   return image
 
+def create_video(base_dir, input_dir, input_format, out_name, video_kwargs, num_frames=480):
+  # Last two parts of checkpoint path are experiment name and scene name.
+
+  zpad = 5# max(5, len(str(num_frames - 1)))
+  idx_to_str = lambda idx: str(idx).zfill(zpad)
+
+  video_file = os.path.join(base_dir, f'{out_name}.mp4')
+
+  file_ext = 'png'
+  idx = 0
+
+  file0 = os.path.join(input_dir, 'renders', f'{idx_to_str(0)}.{file_ext}')
+
+  print(file0)
+
+  if not os.path.exists(file0):
+    print(f'Images missing')
+    return
+  
+  print(f'Making video {video_file}...')
+  with media.VideoWriter(
+      video_file, **video_kwargs, input_format=input_format) as writer:
+    for idx in tqdm(range(num_frames)):
+      # img_file = os.path.join(input_dir, f'{k}_{idx_to_str(idx)}.{file_ext}')
+      img_file = os.path.join(input_dir, 'renders', f'count_{idx_to_str(idx)}.{file_ext}')
+
+      if not os.path.exists(img_file):
+        ValueError(f'Image file {img_file} does not exist.')
+      img = load_img(img_file)
+      img = img / 255.0
+
+      frame = (np.clip(np.nan_to_num(img), 0., 1.) * 255.).astype(np.uint8)
+      writer.add_image(frame)
+      idx += 1
 
 def create_videos(base_dir, input_dir, out_name, num_frames=480):
   """Creates videos out of the images saved to disk."""
