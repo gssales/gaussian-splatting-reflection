@@ -298,9 +298,18 @@ renderCUDA(
 			float3 k = pix.x * Tw - Tu;
 			float3 l = pix.y * Tw - Tv;
 			float3 p = cross(k, l);
-			if (p.z == 0.0) continue;
-			float2 s = {p.x / p.z, p.y / p.z};
-			float rho3d = (s.x * s.x + s.y * s.y); 
+			// if (p.z == 0.0) continue;
+			bool unstable = fabsf(p.z) < 1e-4f;
+			float2 s; // what is s TODO
+			if (!unstable) {
+				float inv_pz = 1.0f / p.z;
+				s = {p.x * inv_pz, p.y * inv_pz};
+			} else {
+				s = {0.0f, 0.0f};  // dummy, won't be used
+			}
+			float rho3d = unstable ? 1e8f : (s.x * s.x + s.y * s.y);
+			// float2 s = {p.x / p.z, p.y / p.z};
+			// float rho3d = (s.x * s.x + s.y * s.y); 
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); 
 			float rho = min(rho3d, rho2d);
@@ -308,7 +317,7 @@ renderCUDA(
 			// compute depth
 			float c_d = (s.x * Tw.x + s.y * Tw.y) + Tw.z; // Tw * [u,v,1]
 			// if a point is too small, its depth is not reliable?
-			// c_d = (rho3d <= rho2d) ? c_d : Tw.z; 
+			c_d = (rho3d <= rho2d) ? c_d : Tw.z; 
 			if (c_d < near_n) continue;
 			
 			float4 nor_o = collected_normal_opacity[j];

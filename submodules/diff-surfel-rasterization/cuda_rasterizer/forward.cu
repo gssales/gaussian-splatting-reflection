@@ -372,10 +372,19 @@ renderCUDA(
 			float3 l = pix.y * Tw - Tv;
 			// Cross product of two planes is a line, Eq. (9)
 			float3 p = cross(k, l);
-			if (p.z == 0.0) continue;
+			//if (p.z == 0.0) continue;
+			bool unstable = fabsf(p.z) < 1e-4f;
+			float2 s; // what is s TODO
+			if (!unstable) {
+				float inv_pz = 1.0f / p.z;
+				s = {p.x * inv_pz, p.y * inv_pz};
+			} else {
+				s = {0.0f, 0.0f};  // dummy, won't be used
+			}
+			float rho3d = unstable ? 1e8f : (s.x * s.x + s.y * s.y);
 			// Perspective division to get the intersection (u,v), Eq. (10)
-			float2 s = {p.x / p.z, p.y / p.z};
-			float rho3d = (s.x * s.x + s.y * s.y); 
+			//float2 s = {p.x / p.z, p.y / p.z};
+			//float rho3d = (s.x * s.x + s.y * s.y); 
 			// Add low pass filter
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); 
@@ -384,7 +393,7 @@ renderCUDA(
 			// compute depth
 			float depth = (s.x * Tw.x + s.y * Tw.y) + Tw.z;
 			// if a point is too small, its depth is not reliable?
-			// depth = (rho3d <= rho2d) ? depth : Tw.z 
+			depth = (rho3d <= rho2d) ? depth : Tw.z;
 			if (depth < near_n) continue;
 
 			float4 nor_o = collected_normal_opacity[j];

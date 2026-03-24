@@ -166,7 +166,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
     # get expected depth map
     render_depth_expected = allmap[0:1]
     min_alpha = 1e-3
-    render_depth_expected = render_depth_expected / torch.clamp(render_alpha.detach(), min=min_alpha)
+    render_depth_expected = render_depth_expected / torch.clamp(render_alpha, min=min_alpha)
     render_depth_expected = torch.nan_to_num(render_depth_expected, 0, 0)
     
     # get depth distortion map
