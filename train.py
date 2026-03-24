@@ -26,8 +26,7 @@ import traceback
 import torchvision
 from torchvision.utils import make_grid, save_image
 from utils.general_utils import colormap  # used repeatedly
-from utils.image_utils import colormap as img_colormap  # different colormap function
-from utils.image_utils import to_3ch
+from ppisp import PPISP, PPISPConfig
 try:
     import warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -42,9 +41,47 @@ try:
 except:
     FUSED_SSIM_AVAILABLE = False
 
+_PIXEL_COORD_CACHE = {}
+def get_pixel_coords(height: int, width: int, device: torch.device) -> torch.Tensor:
+    """
+    Returns pixel coordinates with shape [H, W, 2] in (x, y) order as float32.
+    Cached per (H, W, device).
+    """
+    key = (height, width, str(device))
+    if key not in _PIXEL_COORD_CACHE:
+        ys = torch.arange(height, device=device, dtype=torch.float32)
+        xs = torch.arange(width, device=device, dtype=torch.float32)
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+        coords = torch.stack([grid_x, grid_y], dim=-1).contiguous()  # [H, W, 2]
+        _PIXEL_COORD_CACHE[key] = coords
+    return _PIXEL_COORD_CACHE[key]
+
+def apply_ppisp(ppisp, rgb_raw_chw, frame_idx, clamp=False):
+    """
+    rgb_raw_chw: [3, H, W]
+    returns rgb_out_chw: [3, H, W]
+    """
+    _, H, W = rgb_raw_chw.shape
+    pixel_coords = get_pixel_coords(H, W, rgb_raw_chw.device)
+    camera_idx = 0
+
+    rgb_raw_hwc = rgb_raw_chw.permute(1, 2, 0).contiguous()
+    rgb_out_hwc = ppisp(
+        rgb_raw_hwc,
+        pixel_coords,
+        resolution=(W, H),
+        camera_idx=camera_idx,
+        frame_idx=frame_idx,
+    )
+    rgb_out_chw = rgb_out_hwc.permute(2, 0, 1).contiguous()
+
+    if clamp:
+        rgb_out_chw = torch.clamp(rgb_out_chw, 0.0, 1.0)
+    return rgb_out_chw
+
 def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, progress_iterations):
 
-    view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "Normal", "Refl. Color", "Edge", "Curvature", "Mask"]
+    view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "", "Refl. Color", "RGB raw"]
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -64,9 +101,37 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     gaussians = GaussianModel(dataset.sh_degree, opt.refl_init_value, dataset.cubemap_resol)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+
+    ppisp_config = PPISPConfig(
+        use_controller=True,
+        controller_distillation=True,
+        controller_activation_ratio=(opt.iterations - 5000) / opt.iterations, 
+    )
+    ppisp = PPISP(num_cameras=1, num_frames=len(scene.getTrainCameras()), config=ppisp_config).cuda()
+    ppisp.train()
+    ppisp_optimizers = ppisp.create_optimizers()
+    ppisp_schedulers = ppisp.create_schedulers(ppisp_optimizers, opt.iterations)
+    
     if checkpoint:
-        (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, opt)
+        ckpt = torch.load(checkpoint)
+        if isinstance(ckpt, tuple):
+            # backward compatibility with original 3DGS checkpoint format
+            model_params, first_iter = ckpt
+            gaussians.restore(model_params, opt)
+        else:
+            first_iter = ckpt["iteration"]
+            gaussians.restore(ckpt["gaussians"], opt)
+            if "ppisp" in ckpt:
+                ppisp.load_state_dict(ckpt["ppisp"])
+            if "ppisp_optimizers" in ckpt:
+                for opt_idx, state in enumerate(ckpt["ppisp_optimizers"]):
+                    if opt_idx < len(ppisp_optimizers):
+                        ppisp_optimizers[opt_idx].load_state_dict(state)
+            if "ppisp_schedulers" in ckpt:
+                for sch_idx, state in enumerate(ckpt["ppisp_schedulers"]):
+                    if sch_idx < len(ppisp_schedulers):
+                        ppisp_schedulers[sch_idx].load_state_dict(state)
+
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -79,21 +144,24 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     ema_loss_for_log = 0.0
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
+    ema_ppisp_loss_for_log = 0.0
 
     print('Total Iterations: {}'.format(opt.iterations))
     print('Densify until: {}'.format(densify_until_iteration))
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations+1):
+    for iteration in range(first_iter, opt.iterations+1):        
+        scene_frozen = ppisp_config.use_controller and (iteration >= ppisp_config.controller_activation_ratio * opt.iterations)
 
         iter_start.record()
 
-        gaussians.update_learning_rate(iteration)
+        if not scene_frozen:
+            gaussians.update_learning_rate(iteration)
 
-        # Every 1000 its we increase the levels of SH up to a maximum degree
-        # deferred_reflection delays the sh optimization
-        if iteration > opt.feature_rest_from_iter and iteration % 1000 == 0:
-            gaussians.oneupSHdegree()
+            # Every 1000 its we increase the levels of SH up to a maximum degree
+            # deferred_reflection delays the sh optimization
+            if iteration > opt.feature_rest_from_iter and iteration % 1000 == 0:
+                gaussians.oneupSHdegree()
 
         # Pick a random Camera
         if not viewpoint_stack:
@@ -103,23 +171,31 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
         vind = viewpoint_indices.pop(rand_idx)
 
-        if opt.random_background_color:
-            background = torch.rand(3, dtype=torch.float32, device="cuda")
+        bg = torch.rand((3), device="cuda") if opt.random_background_color else background
 
         # Render
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, initial_stage=iteration<opt.init_until_iter, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)
-        image, viewspace_point_tensor, visibility_filter, radii, alpha = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["rend_alpha"]
+        render_pkg = render(
+            viewpoint_cam, 
+            gaussians, 
+            pipe, 
+            bg, 
+            initial_stage=iteration<opt.init_until_iter, 
+            env_scope_center=opt.env_scope_center, 
+            env_scope_radius=opt.env_scope_radius)
+        rgb_raw, viewspace_point_tensor, visibility_filter, radii, alpha = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["rend_alpha"]
         env_scope_mask = render_pkg["env_scope_mask"]
 
-        # Loss
+        # Apply PPISP
+        image = apply_ppisp(ppisp, rgb_raw, frame_idx=vind)
+
         gt_image = viewpoint_cam.original_image.cuda()
         gt_alpha_mask = viewpoint_cam.gt_alpha_mask
-
-        image = image * alpha + (1-alpha) * background[:, None, None]
         if gt_alpha_mask is not None:
             gt_alpha_mask = gt_alpha_mask.cuda()
             gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
+            rgb_raw = rgb_raw * alpha + (1-alpha) * background[:, None, None]
 
+        # Loss
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
@@ -161,6 +237,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         else:
             dist_loss = 0
 
+        # Add PPISP regularization loss to other losses
+        ppisp_loss = ppisp.get_regularization_loss()
+        loss = loss + ppisp_loss
+
         loss.backward()
         iter_end.record()
 
@@ -169,12 +249,14 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_dist_for_log = 0.4 * dist_loss + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss + 0.6 * ema_normal_for_log
+            ema_ppisp_loss_for_log = 0.4 * ppisp_loss.item() + 0.6 * ema_ppisp_loss_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "Normal": f"{ema_normal_for_log:.{5}f}",
+                    "PPISP": f"{ema_ppisp_loss_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
                 }
                 progress_bar.set_postfix(loss_dict)
@@ -185,13 +267,12 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # Log and save
             loss_report = {
                 'l1_loss': Ll1.item(),
-                'dist_loss': dist_loss,
                 'normal_loss': normal_loss,
+                'ppisp_loss': ppisp_loss.item(),
                 'total_loss': loss.item()
             }
             bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter)
-            progress_report(iteration, progress_iterations, scene, render, (pipe, bg), bg, initial_stage=iteration<=opt.init_until_iter, model_path=dataset.model_path)
+            training_report(tb_writer, iteration, loss_report, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, ppisp, render, pipe, bg, initial_stage=iteration<=opt.init_until_iter)
 
             if iteration == densify_until_iteration:
                 gaussians.double_env_map()
@@ -207,7 +288,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 scene.save(iteration)
 
             # Densification
-            if iteration < densify_until_iteration:
+            if (not scene_frozen) and iteration < densify_until_iteration:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
@@ -259,13 +340,33 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
             # Optimizer step
             if iteration < opt.iterations:
-                gaussians.optimizer.step()
-                gaussians.optimizer.zero_grad(set_to_none = True)
+                for ppisp_opt in ppisp_optimizers:
+                    ppisp_opt.step()
+                    ppisp_opt.zero_grad(set_to_none=True)
+
+                for sched in ppisp_schedulers:
+                    sched.step()
+
+                if not scene_frozen:
+                    # NOTE: Do NOT step gaussians.exposure_optimizer here.
+                    # PPISP replaces the learned exposure path in 3DGS.
+                    gaussians.optimizer.step()
+                    gaussians.optimizer.zero_grad(set_to_none=True)
+                else:
+                    gaussians.optimizer.zero_grad(set_to_none=True)
+
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
-
+                ckpt = {
+                    "gaussians": gaussians.capture(),
+                    "iteration": iteration,
+                    "ppisp": ppisp.state_dict(),
+                    "ppisp_optimizers": [o.state_dict() for o in ppisp_optimizers],
+                    "ppisp_schedulers": [s.state_dict() for s in ppisp_schedulers],
+                }
+                torch.save(ckpt, scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+    
             if network_gui.conn == None:
                 network_gui.try_connect(view_render_options)
             while network_gui.conn != None:
@@ -275,7 +376,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     if custom_cam != None:
                         bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
                         render_pkg = render(custom_cam, gaussians, pipe, bg, scaling_modifer, initial_stage=False, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
-                        net_image = render_net_image(render_pkg, view_render_options, render_mode, custom_cam)
+                        rgb_raw = render_pkg["render"]
+                        rgb_out = apply_ppisp(ppisp, rgb_raw, frame_idx=-1, clamp=True)
+                        net_image = render_net_image(rgb_out, render_pkg, view_render_options, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
                         "it": iteration,
@@ -315,108 +418,6 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-@torch.no_grad()
-def progress_report(
-    iteration,
-    progress_iterations, 
-    scene : Scene, 
-    renderFunc, 
-    renderArgs,
-    bg,
-    initial_stage,
-    model_path,
-):
-    if iteration in progress_iterations:
-        torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())] for idx in range(0, len(scene.getTestCameras()), 5)]}, 
-                              {'name': 'train', 'cameras' : []})
-        
-        cubemap_dir = os.path.join(model_path, 'progress/cubemaps')
-        os.makedirs(cubemap_dir, exist_ok=True)
-        
-        textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
-        grid = plot_cubemap(textures)
-        cubemap_name = f"cubemap_{iteration}.png"
-        save_path = os.path.join(cubemap_dir, cubemap_name)
-        save_image(grid, save_path)
-
-        for config in validation_configs:
-            config_name = config['name']
-            if config['cameras'] and len(config['cameras']) > 0:
-
-                # base folder: dataset.model_path/progress/{train|test}
-                base_save_dir = os.path.join(model_path, 'progress', config_name)
-                os.makedirs(base_save_dir, exist_ok=True)
-                
-                for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
-                    image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
-                    alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
-                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = torch.clamp(viewpoint.gt_alpha_mask.to("cuda"), 0.0, 1.0)
-
-                    image = image * alpha + (1-alpha) * bg[:, None, None]
-                    if gt_alpha_mask is not None:
-                        gt_alpha_mask = gt_alpha_mask.cuda()
-                        gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
-
-                    # ---- Save grid per camera (by attributes) ----
-                    if base_save_dir is not None:
-                        tiles = []
-
-                        tiles.append(to_3ch(gt_image))
-                        tiles.append(to_3ch(image))
-
-                        try:
-                            if "base_color_map" in render_pkg:
-                                base_color = torch.clamp(render_pkg["base_color_map"], 0.0, 1.0).to("cuda")   # usually (1,3,H,W)
-                                tiles.append(to_3ch(base_color))
-                        except Exception:
-                            pass
-
-                        try:
-                            depth = render_pkg["surf_depth"]     
-                            norm = depth.max().clamp(min=1e-8)
-                            depth_norm = depth / norm   
-
-                            # Convert to (H,W) for colormap
-                            depth_color = img_colormap(depth_norm, cmap='turbo') 
-                            tiles.append(to_3ch(depth_color))
-                        except Exception as e:
-                            print(e)
-                            traceback.print_exc()
-
-                        try:
-                            if "rend_normal" in render_pkg:
-                                rn = render_pkg["rend_normal"] * 0.5 + 0.5   # usually (1,3,H,W)
-                                tiles.append(to_3ch(rn))
-
-                            if "surf_normal" in render_pkg:
-                                sn = render_pkg["surf_normal"] * 0.5 + 0.5
-                                tiles.append(to_3ch(sn))
-
-                            if "refl_strength_map" in render_pkg:
-                                rm = render_pkg["refl_strength_map"]         # maybe (1,1,H,W) or (1,H,W)
-                                tiles.append(to_3ch(rm))
-                        except Exception:
-                            pass
-
-                        # avoid saving very large images/grids
-                        if gt_image.shape[2] > 512 or gt_image.shape[1] > 512:
-                            large_dim = max(gt_image.shape[1], gt_image.shape[2])
-                            scale_factor = 512 / large_dim
-                            dimens = (int(gt_image.shape[1] * scale_factor), int(gt_image.shape[2] * scale_factor))
-                            for i in range(len(tiles)):
-                                tiles[i] = torchvision.transforms.functional.resize(tiles[i], dimens, interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
-
-                        tiles = [t for t in tiles if t is not None]
-                        if len(tiles) > 0:
-                            cat = torch.cat(tiles, dim=0)  # (N,3,H,W) – now safe
-                            grid = make_grid(cat, nrow=3, padding=2)
-
-                            img_name = f"{config_name}_{idx:03d}_{iteration}.png"
-                            save_path = os.path.join(base_save_dir, img_name)
-                            save_image(grid, save_path)
 
 @torch.no_grad()
 def training_report(
@@ -427,8 +428,9 @@ def training_report(
     elapsed,
     testing_iterations,
     scene : Scene, 
+    ppisp: PPISP,
     renderFunc, 
-    renderArgs,
+    pipe,
     bg,
     initial_stage,
 ):
@@ -442,118 +444,146 @@ def training_report(
     if iteration in testing_iterations:
         tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
         tb_writer.add_histogram("scene/refl_histogram", scene.gaussians.get_refl, iteration)
-
         textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
         grid = plot_cubemap(textures)
         tb_writer.add_image("env_cubemap", grid, iteration)
 
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, len(scene.getTrainCameras()), 5)]})
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras(), "use_known_frame_idx": False}, 
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)], "use_known_frame_idx": True})
 
+        with torch.no_grad():        
+            for config in validation_configs:
+                config_name = config['name']
+                if config['cameras'] and len(config['cameras']) > 0:
 
-        for config in validation_configs:
-            config_name = config['name']
-            if config['cameras'] and len(config['cameras']) > 0:
+                    l1_test = 0.0
+                    psnr_test = 0.0
+                    for idx, viewpoint in enumerate(config['cameras']):
+                        render_pkg = renderFunc(
+                            viewpoint, 
+                            scene.gaussians, 
+                            pipe,
+                            bg, 
+                            initial_stage=initial_stage)
+                        raw_image = render_pkg["render"]
+                    
+                        gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                        gt_alpha_mask = viewpoint.gt_alpha_mask
+                        if gt_alpha_mask is not None:
+                            gt_alpha_mask = gt_alpha_mask.cuda()
+                            gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
+                            
+                            alpha = render_pkg["rend_alpha"]
+                            raw_image = raw_image * alpha + (1-alpha) * bg[:, None, None]
 
-                l1_test = 0.0
-                psnr_test = 0.0
-                for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs, initial_stage=initial_stage)
-                    image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
-                    alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0).to("cuda")
-                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    gt_alpha_mask = viewpoint.gt_alpha_mask
+                        frame_idx = idx if config["use_known_frame_idx"] else -1
+                        rgb_out = apply_ppisp(ppisp, raw_image, frame_idx=frame_idx, clamp=True)
 
-                    image = image * alpha + (1-alpha) * bg[:, None, None]
-                    if gt_alpha_mask is not None:
-                        gt_alpha_mask = gt_alpha_mask.cuda()
-                        gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * bg[:, None, None]
-
-                    # ---- TensorBoard logging ----
-                    if tb_writer and (idx < 5):
-                        depth = render_pkg["surf_depth"]
-                        norm = depth.max()
-                        depth = depth / norm
-                        depth = colormap(depth.detach().cpu().numpy()[0], cmap='turbo')
-
-                        tb_writer.add_images(
-                            f"{config_name}_view_{viewpoint.image_name}/depth",
-                            depth[None],
-                            global_step=iteration,
-                        )
-                        tb_writer.add_images(
-                            f"{config_name}_view_{viewpoint.image_name}/render",
-                            image[None],
-                            global_step=iteration,
-                        )
-
-                        try:
-                            base_color_map = render_pkg["base_color_map"]
-                            refl_map = render_pkg['refl_strength_map']
-                            rend_alpha = render_pkg['rend_alpha']
-                            rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
-                            rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
-                            surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
-
+                        # ---- TensorBoard logging ----
+                        if tb_writer and (idx < 5):
                             tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/base_color",
-                                base_color_map[None],
+                                f"{config_name}_view_{viewpoint.image_name}/render",
+                                rgb_out[None],
                                 global_step=iteration,
                             )
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/rend_normal",
-                                rend_normal[None],
-                                global_step=iteration,
-                            )
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/surf_normal",
-                                surf_normal[None],
-                                global_step=iteration,
-                            )
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/rend_alpha",
-                                rend_alpha[None],
-                                global_step=iteration,
-                            )
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/refl_map",
-                                refl_map[None],
-                                global_step=iteration,
-                            )
-                        except Exception:
-                            pass
+                            
+                            if iteration == testing_iterations[0]:
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/ground_truth",
+                                    gt_image[None],
+                                    global_step=iteration,
+                                )
 
-                        if iteration == testing_iterations[0]:
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/ground_truth",
-                                gt_image[None],
-                                global_step=iteration,
-                            )
+                            try:
+                                base_color_map = render_pkg["base_color_map"]
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/base_color",
+                                    base_color_map[None],
+                                    global_step=iteration,
+                                )
+                            except Exception:
+                                pass
 
-                    # ---- Metrics ----
-                    l1_test += l1_loss(image, gt_image).mean().double()
-                    psnr_test += psnr(image, gt_image).mean().double()
+                            try:
+                                refl_map = render_pkg['refl_strength_map']
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/refl_map",
+                                    refl_map[None],
+                                    global_step=iteration,
+                                )
+                            except Exception:
+                                pass
+
+                            try:
+                                rend_alpha = render_pkg['rend_alpha']
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/refl_map",
+                                    refl_map[None],
+                                    global_step=iteration,
+                                )
+                            except Exception:
+                                pass
+
+                            try:
+                                rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/rend_alpha",
+                                    rend_alpha[None],
+                                    global_step=iteration,
+                                )
+                            except Exception:
+                                pass
+
+                            try:
+                                rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/rend_normal",
+                                    rend_normal[None],
+                                    global_step=iteration,
+                                )
+                            except Exception:
+                                pass
+
+                            try:
+                                surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/surf_normal",
+                                    surf_normal[None],
+                                    global_step=iteration,
+                                )
+                            except Exception:
+                                pass
+        
+                            try:
+                                depth = render_pkg["surf_depth"]
+                                norm = depth.max()
+                                depth = depth / norm
+                                depth = colormap(depth.detach().cpu().numpy()[0], cmap='turbo')
+                                tb_writer.add_images(
+                                    f"{config_name}_view_{viewpoint.image_name}/depth",
+                                    depth[None],
+                                    global_step=iteration,
+                                )
+                            except Exception as e:
+                                pass
+
+                        # ---- Metrics ----
+                        l1_test += l1_loss(rgb_out, gt_image).mean().double()
+                        psnr_test += psnr(rgb_out, gt_image).mean().double()
 
 
-            # ---- Average metrics per config ----
-            psnr_test /= len(config['cameras'])
-            l1_test /= len(config['cameras'])
-            print(f"\n[ITER {iteration}] Evaluating {config_name}: L1 {l1_test} PSNR {psnr_test}")
-            if tb_writer:
-                tb_writer.add_scalar(
-                    f"{config_name}/loss_viewpoint - l1_loss",
-                    l1_test,
-                    iteration,
-                )
-                tb_writer.add_scalar(
-                    f"{config_name}/loss_viewpoint - psnr",
-                    psnr_test,
-                    iteration,
-                )
+                # ---- Average metrics per config ----
+                psnr_test /= len(config['cameras'])
+                l1_test /= len(config['cameras'])
+                print(f"\n[ITER {iteration}] Evaluating {config_name}: L1 {l1_test} PSNR {psnr_test}")
+                if tb_writer:
+                    tb_writer.add_scalar(f"{config_name}/loss_viewpoint - l1_loss", l1_test, iteration)
+                    tb_writer.add_scalar(f"{config_name}/loss_viewpoint - psnr", psnr_test, iteration)
 
     if tb_writer:
         tb_writer.flush()
+    ppisp.train()
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
@@ -575,6 +605,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
+    args.checkpoint_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
 
