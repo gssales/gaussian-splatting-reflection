@@ -23,10 +23,9 @@ from utils.image_utils import plot_cubemap, psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import traceback
-import torchvision
-from torchvision.utils import make_grid, save_image
 from utils.general_utils import colormap  # used repeatedly
 from ppisp import PPISP, PPISPConfig
+from utils.post_process_utils import apply_ppisp
 try:
     import warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -40,44 +39,6 @@ try:
     FUSED_SSIM_AVAILABLE = True
 except:
     FUSED_SSIM_AVAILABLE = False
-
-_PIXEL_COORD_CACHE = {}
-def get_pixel_coords(height: int, width: int, device: torch.device) -> torch.Tensor:
-    """
-    Returns pixel coordinates with shape [H, W, 2] in (x, y) order as float32.
-    Cached per (H, W, device).
-    """
-    key = (height, width, str(device))
-    if key not in _PIXEL_COORD_CACHE:
-        ys = torch.arange(height, device=device, dtype=torch.float32)
-        xs = torch.arange(width, device=device, dtype=torch.float32)
-        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
-        coords = torch.stack([grid_x, grid_y], dim=-1).contiguous()  # [H, W, 2]
-        _PIXEL_COORD_CACHE[key] = coords
-    return _PIXEL_COORD_CACHE[key]
-
-def apply_ppisp(ppisp, rgb_raw_chw, frame_idx, clamp=False):
-    """
-    rgb_raw_chw: [3, H, W]
-    returns rgb_out_chw: [3, H, W]
-    """
-    _, H, W = rgb_raw_chw.shape
-    pixel_coords = get_pixel_coords(H, W, rgb_raw_chw.device)
-    camera_idx = 0
-
-    rgb_raw_hwc = rgb_raw_chw.permute(1, 2, 0).contiguous()
-    rgb_out_hwc = ppisp(
-        rgb_raw_hwc,
-        pixel_coords,
-        resolution=(W, H),
-        camera_idx=camera_idx,
-        frame_idx=frame_idx,
-    )
-    rgb_out_chw = rgb_out_hwc.permute(2, 0, 1).contiguous()
-
-    if clamp:
-        rgb_out_chw = torch.clamp(rgb_out_chw, 0.0, 1.0)
-    return rgb_out_chw
 
 def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, progress_iterations):
 
