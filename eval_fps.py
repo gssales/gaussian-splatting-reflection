@@ -27,11 +27,11 @@ def render_fps(dataset : ModelParams, iteration : int, pipeline : PipelineParams
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
 
-        ppisp = PPISP(num_cameras=len(scene.getTrainCameras()), num_frames=len(scene.getTrainCameras()))
+        ppisp = PPISP(num_cameras=1, num_frames=len(scene.getTrainCameras()))
 
         if checkpoint:
-            opt = OptimizationParams()
-            ckpt = torch.load(checkpoint)
+            opt = OptimizationParams(ArgumentParser())
+            ckpt = torch.load(checkpoint, weight_only=False)
             if isinstance(ckpt, tuple):
                 model_params, _ = ckpt
                 gaussians.restore(model_params, opt)
