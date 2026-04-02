@@ -1,110 +1,173 @@
 from pathlib import Path
-import numpy as np
+import traceback
 import os, sys
-import tqdm
+import re
+from natsort import natsorted
+from tqdm import tqdm
 from PIL import Image
 import torch
-import cv2
 import torchvision.transforms.functional as tf
-from gaussian_renderer import GaussianModel
-from scene import Scene
-from utils.general_utils import safe_state
 from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams, get_combined_args
 
-def compute_mae(pred, gt, eps=1e-8):
+def angular_error_map(pred: torch.Tensor, gt: torch.Tensor, eps: float = 1e-8):
   """
-  gt, pred: arrays of shape (H, W, 3), holding either normals or RGB vectors.
-  returns: mean angular error in degrees
+  pred, gt: torch tensors of shape [1, 3, H, W], normalized
+
+  returns: torch tensor of shape [H, W] with angular error in degrees
+            invalid pixels set to NaN
   """
-  # flatten to (N,3)
-  gt_v   = gt.reshape(-1, 3)
-  pred_v = pred.reshape(-1, 3)
-  # normalize to unit length
-  gt_v = gt_v.astype(np.float32) / 65535.0
-  pred_v = pred_v.astype(np.float32) / 255.0
-  # dot products and norms
-  dot = np.sum(gt_v * pred_v, axis=1)
-  norm_gt   = np.linalg.norm(gt_v,   axis=1)
-  norm_pred = np.linalg.norm(pred_v, axis=1)
-  cos_ang = dot / (norm_gt * norm_pred + eps)
-  # clamp and compute angle
-  cos_ang = np.clip(cos_ang, -1.0, 1.0)
-  ang_rad = np.arccos(cos_ang)
-  ang_deg = np.degrees(ang_rad)
-  # mask out any pixels you don’t trust (e.g. depth invalid)
-  valid = ~np.isnan(ang_deg)
-  return np.mean(ang_deg[valid])
+  # Per-pixel dot product → [H, W]
+  dot = torch.sum(pred * gt, dim=0)
 
-def compute_mean_angular_error(render_path, gt_path):
-  gt_normals, gt_image_names, alphas = readGTImages(gt_path)
+  # Per-pixel norms → [H, W]
+  norm_pred = torch.linalg.norm(pred, dim=0)
+  norm_gt   = torch.linalg.norm(gt, dim=0)
 
-  for method in os.listdir(render_path):
-    print(method)
-    render_normals, image_names = readImages(render_path / method)
-    total_mae = 0.0
-    for idx in range(len(render_normals)):
-      print(image_names[idx], gt_image_names[idx])
-      alpha = alphas[idx]
-      normal = render_normals[idx][alpha > 0]
-      normal = (normal-0.5)*2
-      
-      gt_normal = gt_normals[idx][alpha > 0]
-      gt_normal = (gt_normal-0.5)*2
+  # Cosine of angle
+  cos_ang = dot / (norm_pred * norm_gt + eps)
+  cos_ang = torch.clamp(cos_ang, -1.0, 1.0)
 
-      # print(alpha.shape)
-      # print(normal.shape)
-      # print(gt_normal.shape)
-      # cv2.imshow("alpha", alpha)
-      # cv2.imshow("normal", render_normals[idx])
-      # cv2.imshow("gt normal", gt_normals[idx])
-      # cv2.waitKey(0)
+  # Angle in degrees
+  ang_deg = torch.acos(cos_ang) * (180.0 / torch.pi)
 
-      # print(image_names[idx])
-      total_mae += compute_mae(normal, gt_normal)
-  
-    print(f"Method: {method}  MÂE: {total_mae/len(render_normals)}")
+  # Mask invalid pixels
+  ang_deg = ang_deg.clone()
 
-def readImages(renders_dir):
-  renders = []
-  image_names = []
-  for fname in os.listdir(renders_dir / "normals"):
-    render = cv2.imread(str(renders_dir / "normals" / fname), cv2.IMREAD_UNCHANGED)
-    print(render.min(), render.max())
-    # append numpy array of shape (H,W,3)
-    renders.append(render)
-    # renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
-    image_names.append(fname)
-  return renders, image_names
+  return ang_deg
 
-def readGTImages(gt_dir):
-  images = []
-  images_names = []
-  alphas = []
-  for fname in os.listdir(gt_dir):
-    if fname.endswith("_normal.png"):
-      normal = cv2.imread(str(gt_dir / fname), cv2.IMREAD_UNCHANGED)[..., :3]
-      print(normal.min(), normal.max())
-      images.append(normal)
-      images_names.append(fname)
+
+def compute_mae(pred: torch.Tensor, gt: torch.Tensor, eps: float = 1e-8):
+  """
+  pred, gt: torch tensors of shape [1, 3, H, W]
+            pred assumed in [0,255], gt in [0,65535]
+
+  returns: torch tensor of shape [H, W] with angular error in degrees
+            invalid pixels set to NaN
+  """
+
+  if pred.ndim != 4 or gt.ndim != 4:
+    raise ValueError(f"Expected 4D tensors [B,3,H,W], got pred {pred.shape}, gt {gt.shape}")
+
+  if pred.shape[0] != 1 or gt.shape[0] != 1:
+    raise ValueError("This function expects batch size = 1")
+
+  if pred.shape[1] != 3 or gt.shape[1] != 3:
+    raise ValueError("Expected channel dimension = 3")
+
+  # Remove batch dimension → [3, H, W]
+  pred = pred[0]
+  gt = gt[0]
+
+  # Convert to float + normalize
+  pred = pred.to(torch.float32)
+  gt   = gt.to(torch.float32)
+
+  angular_error = angular_error_map(pred, gt, eps)
+
+  return angular_error[~torch.isnan(angular_error)].mean().item()
+
+def extract_iteration(key: str):
+  """
+  Extract a numeric iteration from keys like:
+    'ref_gs_30000' -> 30000
+    'ours_31000'   -> 31000
+  If none found, return -1 so it loses in max().
+  """
+  m = re.findall(r"(\d+)", key)
+  if not m:
+    return -1
+  return int(m[-1])
+
+def pick_best_key(results: dict):
+  """
+  Pick the key with the highest numeric iteration.
+  Fallback: first key if parsing fails.
+  """
+  if not results:
+    return None
+
+  keys = list(results.keys())
+  best = max(keys, key=lambda k: extract_iteration(k))
+  return best
+
+def evaluate(model_path, source_path):
+  try:          
+    if not model_path.is_dir():
+      print(f"[!] {model_path} is not a directory")
+      return
+
+    test_dir = Path(model_path) / "test"
+    if not test_dir.exists():
+      print(f"[!] No test directory found in {model_path}, skipping.")
+      return
     
+    best_method = pick_best_key(os.listdir(test_dir))
+    if best_method is None:
+      print(f"[!] No valid method directories found in {test_dir}, skipping.")
+      return
+
+    method_dir = test_dir / best_method
+
+    normal_renders_dir = method_dir / "normals"
+    normal_gts_dir = Path(source_path) / "test"
+    normal_renders, normal_gts, alphas = readNormalsImages(normal_renders_dir, normal_gts_dir)
+
+    mean_angular_error = 0.0
+    for idx in tqdm(range(len(normal_renders)), desc="Generating tiles"):
+      normal_gt = normal_gts[idx]
+      normal_gt = (normal_gt-0.5)*2
+      normal_gt = normal_gt[0].to(torch.float32)
+
+      normal_render = normal_renders[idx]
+      normal_render = (normal_render-0.5)*2
+      normal_render = normal_render[0].to(torch.float32)
+
+      angular_error = angular_error_map(normal_render, normal_gt)
+
+      if len(alphas) > idx:
+        alpha = alphas[idx][0,0,:,:]
+        angular_error[alpha < 0.01] = 0
+
+      mean_angular_error += angular_error.mean().item()
+
+    mean_angular_error /= len(normal_renders)
+    with open(model_path / "mae.txt", 'w') as f:
+      f.write(f"{mean_angular_error:.4f}\n")
+
+  except Exception as e:
+    print(f"[!] Unable to compute metrics for model {model_path}")
+    print(e)
+    traceback.print_exc()
+
+def readNormalsImages(renders_dir, gt_dir):
+  render_normals = []
+  for fname in os.listdir(renders_dir):
+    normal = Image.open(renders_dir / fname)
+    render_normals.append(tf.to_tensor(normal).unsqueeze(0)[:, :3, :, :].cuda())
+
+  gt_normals = []
+  alphas = []
+  for fname in natsorted(os.listdir(gt_dir)):
+    if fname.endswith("_normal.png"):
+      normal = Image.open(gt_dir / fname)
+      gt_normals.append(tf.to_tensor(normal).unsqueeze(0)[:, :3, :, :].cuda())
     if fname.endswith("_alpha.png"):
-      alpha = cv2.imread(str(gt_dir / fname), cv2.IMREAD_UNCHANGED)[..., 3] / 255.0
-      # should shape like [1,1,H,W]
-      alphas.append(alpha)
-    elif not fname.endswith("_normal.png") and not fname.endswith("_alpha.png"):
-      rgba_image = cv2.imread(str(gt_dir / fname), cv2.IMREAD_UNCHANGED)[..., :3] / 255.0
-      alphas.append(rgba_image)
-  return images, images_names, alphas
+      alpha = Image.open(gt_dir / fname)
+      alpha_tensor = tf.to_tensor(alpha).unsqueeze(0)[:, :1, :, :].cuda()
+      # should shape like [1,3,H,W]
+      alpha_tensor = alpha_tensor.repeat(1,3,1,1)
+      alphas.append(alpha_tensor)
+
+  return render_normals, gt_normals, alphas
 
 
 if __name__ == "__main__":
   # Set up command line argument parser
   parser = ArgumentParser(description="Testing script parameters")
-  parser.add_argument("--render_path", type=str)
-  parser.add_argument("--gt_path", default="../../datasets/shiny_blender", type=str)
+  parser.add_argument("--model_path", type=str)
+  parser.add_argument("--source_path", default="../../datasets/shiny_blender", type=str)
   
   cmdlne_string = sys.argv[1:]
   args = parser.parse_args(cmdlne_string)
 
-  compute_mean_angular_error(Path(args.render_path), Path(args.gt_path))
+  evaluate(Path(args.model_path), Path(args.source_path))
