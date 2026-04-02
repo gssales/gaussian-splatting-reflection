@@ -1,17 +1,30 @@
-import sys
+from ppisp import PPISP
 from scene import Scene, GaussianModel
 from argparse import ArgumentParser
 from arguments import ModelParams, OptimizationParams, PipelineParams, get_combined_args
 from gaussian_renderer import render, network_gui
 from utils.image_utils import render_net_image
+from utils.post_process_utils import apply_ppisp
 import torch
 
-def view(dataset, pipe, opt, iteration):
+def view(dataset, pipe, opt, iteration, checkpoint=None):
     
     view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "Normal", "Refl. Color", "Edge", "Curvature", "Mask"]
 
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+    ppisp = PPISP(num_cameras=1, num_frames=len(scene.getTrainCameras()))
+
+    if checkpoint:
+        ckpt = torch.load(checkpoint, weights_only=False)
+        if isinstance(ckpt, tuple):
+            model_params, _ = ckpt
+            gaussians.restore(model_params, opt)
+        else:
+            gaussians.restore(ckpt["gaussians"], opt)
+            if "ppisp" in ckpt:
+                ppisp.load_state_dict(ckpt["ppisp"])
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -45,10 +58,12 @@ def view(dataset, pipe, opt, iteration):
             while network_gui.conn != None:
                 try:
                     net_image_bytes = None
-                    custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
+                    custom_cam, _, _, scaling_modifer, render_mode = network_gui.receive()
                     if custom_cam != None:
                         render_pkg = render(custom_cam, gaussians, pipe, background, scaling_modifer, initial_stage=False)
-                        net_image = render_net_image(render_pkg, view_render_options, render_mode, custom_cam)
+                        rgb_raw = render_pkg["render"]
+                        rgb_out = apply_ppisp(ppisp, rgb_raw, frame_idx=-1, clamp=True)
+                        net_image = render_net_image(rgb_out, render_pkg, view_render_options, render_mode, custom_cam)
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
                         "#": gaussians.get_opacity.shape[0],
@@ -71,11 +86,11 @@ if __name__ == "__main__":
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--iteration', type=int, default=30000)
+    parser.add_argument("--start_checkpoint", type=str, default = None)
     args = get_combined_args(parser)
-    # print("View: " + args.model_path)
-    # print("View: ", args)
+    print("View: " + args.model_path)
     network_gui.init(args.ip, args.port)
     
-    view(lp.extract(args), pp.extract(args), opt.extract(args), args.iteration)
+    view(lp.extract(args), pp.extract(args), opt.extract(args), args.iteration, args.start_checkpoint)
 
     print("\nViewing complete.")

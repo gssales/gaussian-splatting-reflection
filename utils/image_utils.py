@@ -45,10 +45,10 @@ def colormap(map, cmap="turbo"):
     colors = torch.tensor(plt.cm.get_cmap(cmap).colors).to(map.device)
     map = (map - map.min()) / (map.max() - map.min())
     map = (map * 255).round().long().squeeze()
-    # map = colors[map].permute(2,0,1)
+    map = colors[map].permute(2,0,1)
     return map
 
-def render_net_image(render_pkg, render_items, render_mode, camera):
+def render_net_image(rgb_out, render_pkg, render_items, render_mode, camera):
     if render_mode >= len(render_items):
         render_mode = 0
     output = render_items[render_mode].lower()
@@ -74,8 +74,10 @@ def render_net_image(render_pkg, render_items, render_mode, camera):
         net_image = render_pkg["rend_normal"]
         net_image = (net_image+1)/2
         net_image = gradient_map(net_image)
-    else:
+    elif output == 'rgb raw':
         net_image = render_pkg["render"]
+    else:
+        net_image = rgb_out
 
     if net_image.shape[0]==1:
         net_image = colormap(net_image)

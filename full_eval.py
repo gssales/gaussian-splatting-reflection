@@ -21,7 +21,6 @@ refnerf_scenes = ["shiny_blender/ball","shiny_blender/car","shiny_blender/coffee
 nerf_synthetic_scenes = ["nerf_synthetic/chair","nerf_synthetic/drums","nerf_synthetic/ficus","nerf_synthetic/hotdog","nerf_synthetic/lego","nerf_synthetic/materials","nerf_synthetic/mic","nerf_synthetic/ship"]
 glossy_synthetic_scenes = ["GlossySynthetic/angel","GlossySynthetic/bell","GlossySynthetic/cat","GlossySynthetic/horse","GlossySynthetic/luyu","GlossySynthetic/potion","GlossySynthetic/tbell","GlossySynthetic/teapot"]
 
-
 parser = ArgumentParser(description="Full evaluation script parameters")
 parser.add_argument("--skip_training", action="store_true")
 parser.add_argument("--skip_rendering", action="store_true")
@@ -38,6 +37,7 @@ all_scenes.extend(envgs_scenes)
 all_scenes.extend(refnerf_scenes)
 all_scenes.extend(nerf_synthetic_scenes)
 all_scenes.extend(glossy_synthetic_scenes)
+all_scenes.extend(envgs_scenes)
 
 scene_args = {}
 with open("scene_args.yaml", 'r') as file:
@@ -96,7 +96,8 @@ if not args.skip_rendering:
             render_args += scene_args["synthetic"]["render"]
             
         output_path = os.path.join(args.output_path, scene)
-        render_command = "python render.py -s " + source + " -m " + output_path + common_args + render_args
+        checkpoint = os.path.join(output_path, "chkpnt65000.pth")
+        render_command = "python render.py -s " + source + " -m " + output_path + common_args + render_args + " --start_checkpoint " + checkpoint
         with open(os.path.join(output_path, "train_command.sh"), 'a') as file:
             file.write(render_command)
 
@@ -108,7 +109,8 @@ if not args.skip_fps:
     for scene in all_scenes:
         print("FPS eval scene:", scene)            
         output_path = os.path.join(args.output_path, scene)
-        fps_eval_command = "python eval_fps.py -m " + output_path
+        checkpoint = os.path.join(output_path, "chkpnt65000.pth")
+        fps_eval_command = "python eval_fps.py -m " + output_path + " --start_checkpoint " + checkpoint
         os.system(fps_eval_command)
 
 if not args.skip_metrics:
