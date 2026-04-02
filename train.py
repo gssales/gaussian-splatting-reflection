@@ -161,9 +161,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         else:
             dist_loss = 0
 
-
         loss.backward()
-
         iter_end.record()
 
         with torch.no_grad():
@@ -220,7 +218,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     densification_interval = opt.densification_interval
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_mean, scene.cameras_extent, size_threshold)
                 
                 opacity_reset_0 = False
                 if iteration % opt.opacity_reset_interval == 0:
@@ -444,10 +442,6 @@ def training_report(
     if iteration in testing_iterations:
         tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
         tb_writer.add_histogram("scene/refl_histogram", scene.gaussians.get_refl, iteration)
-        max_scale = torch.max(scene.gaussians.get_scaling, dim=1).values
-        min_scale = torch.min(scene.gaussians.get_scaling, dim=1).values
-        tb_writer.add_histogram("scene/max_scale", max_scale, iteration)
-        tb_writer.add_histogram("scene/min_scale", min_scale, iteration)
 
         textures = torch.sigmoid(scene.gaussians.env_map.params['Cubemap_texture'])
         grid = plot_cubemap(textures)
