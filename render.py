@@ -78,8 +78,9 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         ppisp = PPISP(num_cameras=1, num_frames=len(scene.getTrainCameras()))
 
         if checkpoint:
+            checkpoint_path = os.path.join(dataset.model_path, checkpoint)
             opt = OptimizationParams(ArgumentParser())
-            ckpt = torch.load(checkpoint, weight_only=False)
+            ckpt = torch.load(checkpoint_path, weight_only=False)
             if isinstance(ckpt, tuple):
                 model_params, _ = ckpt
                 gaussians.restore(model_params, opt)
