@@ -86,8 +86,7 @@ def pick_best_key(results: dict):
   if not results:
     return None
 
-  keys = list(results.keys())
-  best = max(keys, key=lambda k: extract_iteration(k))
+  best = max(results, key=lambda k: extract_iteration(k))
   return best
 
 def evaluate(model_path, source_path):
@@ -141,7 +140,7 @@ def evaluate(model_path, source_path):
 
 def readNormalsImages(renders_dir, gt_dir):
   render_normals = []
-  for fname in os.listdir(renders_dir):
+  for fname in natsorted(os.listdir(renders_dir)):
     normal = Image.open(renders_dir / fname)
     render_normals.append(tf.to_tensor(normal).unsqueeze(0)[:, :3, :, :].cuda())
 
