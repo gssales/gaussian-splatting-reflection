@@ -56,15 +56,12 @@ namespace FORWARD
 		const uint32_t* point_list,
 		int W, int H,
 		float focal_x, float focal_y,
-		const float max_dist_debug,
-		const bool apply_mask,
-		const bool slice,
+		const float scale_modifier,
 		const float* orig_points,
 		const float2* points_xy_image,
 		const bool* env_scope_mask,
 		const float* features,
 		const float* refl_strengths,
-		const float* img_mask,
 		const float* transMats,
 		const float* depths,
 		const float4* normal_opacity,
@@ -74,7 +71,7 @@ namespace FORWARD
 		float* out_color,
 		float* out_others,
 		float* out_refl_strength_map,
-		int* is_rendered);
+		float* gaussian_weights);
 }
 
 

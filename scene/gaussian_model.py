@@ -64,6 +64,8 @@ class GaussianModel:
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
+        self.accum_w = torch.empty(0)
+        self.denom_w = torch.empty(0)
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
@@ -188,6 +190,8 @@ class GaussianModel:
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.accum_w = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.denom_w = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -435,9 +439,24 @@ class GaussianModel:
         self._refl_strength = optimizable_tensors["refl"]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
+        self.accum_w = self.accum_w[valid_points_mask]
 
         self.denom = self.denom[valid_points_mask]
+        self.denom_w = self.denom_w[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+
+        
+    def prune_points_no_grad(self, mask):
+        valid_points_mask = ~mask
+
+        self._xyz = self._xyz[valid_points_mask]
+        self._features_dc = self._features_dc[valid_points_mask]
+        self._features_rest = self._features_rest[valid_points_mask]
+        self._opacity = self._opacity[valid_points_mask]
+        self._scaling = self._scaling[valid_points_mask]
+        self._rotation = self._rotation[valid_points_mask]
+        self._refl_strength = self._refl_strength[valid_points_mask]
+
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -481,7 +500,9 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.accum_w = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.denom_w = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
@@ -528,13 +549,21 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_refl)
 
     def densify_and_prune(self, max_grad, min_opacity, mean, extent, max_screen_size):
+        accum_w = self.accum_w / self.denom_w
+        accum_w[self.denom_w == 0] = 0.0
+        w_mask = (accum_w < 0.01).squeeze()
+        self.prune_points(w_mask)
+
+
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
 
-        prune_mask = (self.get_opacity < min_opacity).squeeze()
+        # prune_mask = (self.get_opacity < min_opacity).squeeze()
+        prune_mask = torch.zeros_like(self.get_opacity).squeeze().bool()
+
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             points_inside = torch.sum((self.get_xyz - mean[None])**2, dim=-1) < extent**2
@@ -547,9 +576,12 @@ class GaussianModel:
 
         torch.cuda.empty_cache()
 
-    def add_densification_stats(self, viewspace_point_tensor, update_filter):
+    def add_densification_stats(self, viewspace_point_tensor, update_filter, render_weight):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+        mask = (render_weight > 0.0).squeeze()
+        self.accum_w[mask] += render_weight[mask].unsqueeze(-1)
+        self.denom_w[mask] += 1
 
 
 def rgb2hsl_torch(rgb: torch.Tensor) -> torch.Tensor:

@@ -231,7 +231,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 # Keep track of max radii in image-space for pruning
                 viewspace_point_tensor, visibility_filter, radii = render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                render_weight = render_pkg["gaussian_weights"]
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, render_weight)
 
                 if not opt.disable_normal_propagation and (opt.init_until_iter < iteration <= normal_prop_until_iter):
                     densification_interval = opt.densification_interval_when_prop

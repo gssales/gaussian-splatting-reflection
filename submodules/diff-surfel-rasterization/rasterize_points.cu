@@ -42,8 +42,7 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& means3D,
 	const torch::Tensor& env_scope_mask,
 	const torch::Tensor& colors,
-	const torch::Tensor &refl_strengths,
-	const torch::Tensor &img_mask,
+	const torch::Tensor& refl_strengths,
 	const torch::Tensor& opacity,
 	const torch::Tensor& scales,
 	const torch::Tensor& rotations,
@@ -59,9 +58,7 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
-	const bool debug,
-	const bool apply_mask,
-	const bool slice)
+	const bool debug)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
 	AT_ERROR("means3D must have dimensions (num_points, 3)");
@@ -76,7 +73,6 @@ RasterizeGaussiansCUDA(
   CHECK_INPUT(means3D);
   CHECK_INPUT(colors);
   CHECK_INPUT(refl_strengths);
-  CHECK_INPUT(img_mask);
   CHECK_INPUT(opacity);
   CHECK_INPUT(scales);
   CHECK_INPUT(rotations);
@@ -97,8 +93,8 @@ RasterizeGaussiansCUDA(
 	out_refl_strength_map = torch::full({1, H, W}, 0.0, float_opts).contiguous();
 	out_refl_strength_mapptr = out_refl_strength_map.data<float>();
 
-  torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
-	torch::Tensor is_rendered = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+  torch::Tensor radii = torch::full({P}, 0, int_opts);
+	torch::Tensor gaussian_weights = torch::full({P}, 0, float_opts);
   
   torch::Device device(torch::kCUDA);
   torch::TensorOptions options(torch::kByte);
@@ -118,50 +114,49 @@ RasterizeGaussiansCUDA(
 	  int M = 0;
 	  if(sh.size(0) != 0)
 	  {
-		M = sh.size(1);
+			M = sh.size(1);
 	  }
 
 	  rendered = CudaRasterizer::Rasterizer::forward(
-		geomFunc,
-		binningFunc,
-		imgFunc,
-		P, degree, M,
-		background.contiguous().data<float>(),
-		W, H,
-		means3D.contiguous().data<float>(),
-		env_scope_mask.contiguous().data<bool>(),
-		sh.contiguous().data_ptr<float>(),
-		colors.contiguous().data<float>(), 
-		refl_strengths.contiguous().data<float>(),
-		img_mask.contiguous().data<float>(),
-		opacity.contiguous().data<float>(), 
-		scales.contiguous().data_ptr<float>(),
-		scale_modifier,
-		rotations.contiguous().data_ptr<float>(),
-		transMat_precomp.contiguous().data<float>(), 
-		viewmatrix.contiguous().data<float>(), 
-		projmatrix.contiguous().data<float>(),
-		campos.contiguous().data<float>(),
-		tan_fovx,
-		tan_fovy,
-		prefiltered,
-		out_color.contiguous().data<float>(),
-		out_others.contiguous().data<float>(),
-		out_refl_strength_mapptr,
-		radii.contiguous().data<int>(),
-		is_rendered.contiguous().data<int>(),
-		debug, apply_mask, slice);
+			geomFunc,
+			binningFunc,
+			imgFunc,
+			P, degree, M,
+			background.contiguous().data<float>(),
+			W, H,
+			means3D.contiguous().data<float>(),
+			env_scope_mask.contiguous().data<bool>(),
+			sh.contiguous().data_ptr<float>(),
+			colors.contiguous().data<float>(), 
+			refl_strengths.contiguous().data<float>(),
+			opacity.contiguous().data<float>(), 
+			scales.contiguous().data_ptr<float>(),
+			scale_modifier,
+			rotations.contiguous().data_ptr<float>(),
+			transMat_precomp.contiguous().data<float>(), 
+			viewmatrix.contiguous().data<float>(), 
+			projmatrix.contiguous().data<float>(),
+			campos.contiguous().data<float>(),
+			tan_fovx,
+			tan_fovy,
+			prefiltered,
+			out_color.contiguous().data<float>(),
+			out_others.contiguous().data<float>(),
+			out_refl_strength_mapptr,
+			radii.contiguous().data<int>(),
+			gaussian_weights.contiguous().data<float>(),
+			debug);
   }
-  return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer, out_refl_strength_map, is_rendered);
+  return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer, out_refl_strength_map, gaussian_weights);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
- RasterizeGaussiansBackwardCUDA(
-	 const torch::Tensor& background,
+RasterizeGaussiansBackwardCUDA(
+	const torch::Tensor& background,
 	const torch::Tensor& means3D,
 	const torch::Tensor& radii,
 	const torch::Tensor& colors,
-	const torch::Tensor &refl_strengths,
+	const torch::Tensor& refl_strengths,
 	const torch::Tensor& scales,
 	const torch::Tensor& rotations,
 	const float scale_modifier,

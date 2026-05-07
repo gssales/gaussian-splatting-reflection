@@ -262,15 +262,12 @@ renderCUDA(
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	float focal_x, float focal_y,
-	const float max_dist_debug,
-	const bool apply_mask,
-	const bool slice,
+	const float scale_modifier,
 	const float* orig_points,
 	const float2* __restrict__ points_xy_image,
 	const bool* __restrict__ env_scope_mask,
 	const float* __restrict__ features,
 	const float* __restrict__ refl_stengths,
-	const float* __restrict__ img_mask,
 	const float* __restrict__ transMats,
 	const float* __restrict__ depths,
 	const float4* __restrict__ normal_opacity,
@@ -280,7 +277,7 @@ renderCUDA(
 	float* __restrict__ out_color,
 	float* __restrict__ out_others,
 	float* __restrict__ out_refl_strength_map,
-	int* __restrict__ is_rendered)
+	float* __restrict__ gaussian_weights)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -404,14 +401,6 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
-			// ================
-
-			float3 point = ((float3*)orig_points)[collected_id[j]];
-			if (slice && (point.x >= max_dist_debug || point.x <= -max_dist_debug))
-				continue;
-
-			// ================
-
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
@@ -466,8 +455,8 @@ renderCUDA(
 #endif
 
 			// mark Gaussians that contribute to image
-			if (!apply_mask || img_mask[H * W + pix_id] == 1.0)
-				atomicExch(&is_rendered[collected_id[j]], 1);
+			if (w > gaussian_weights[collected_id[j]])
+				atomicExch(&gaussian_weights[collected_id[j]], w);
 		}
 	}
 
@@ -485,10 +474,10 @@ renderCUDA(
 		n_contrib[pix_id + H * W] = median_contributor;
 		final_T[pix_id + H * W] = M1;
 		final_T[pix_id + 2 * H * W] = M2;
-		out_others[pix_id + DEPTH_OFFSET * H * W] = D;
+		out_others[pix_id + DEPTH_OFFSET * H * W] = D; // rasterized depth
 		out_others[pix_id + ALPHA_OFFSET * H * W] = 1 - T;
 		for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
-		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
+		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth; // depth of median Gaussian
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		out_others[pix_id + MASK_OFFSET * H * W] = mask;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
@@ -505,15 +494,12 @@ void FORWARD::render(
 	const uint32_t* point_list,
 	int W, int H,
 	float focal_x, float focal_y,
-	const float max_dist_debug,
-	const bool apply_mask,
-	const bool slice,
+	const float scale_modifier,
 	const float* orig_points,
 	const float2* means2D,
 	const bool* env_scope_mask,
 	const float* colors,
 	const float* refl_strengths,
-	const float* img_mask,
 	const float* transMats,
 	const float* depths,
 	const float4* normal_opacity,
@@ -523,22 +509,19 @@ void FORWARD::render(
 	float* out_color,
 	float* out_others,
 	float* out_refl_strength_map,
-	int* is_rendered)
+	float* gaussian_weights)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
 		W, H,
 		focal_x, focal_y,
-		max_dist_debug,
-		apply_mask,
-		slice,
+		scale_modifier,
 		orig_points,
 		means2D,
 		env_scope_mask,
 		colors,
 		refl_strengths,
-		img_mask,
 		transMats,
 		depths,
 		normal_opacity,
@@ -548,7 +531,7 @@ void FORWARD::render(
 		out_color,
 		out_others,
 		out_refl_strength_map,
-		is_rendered);
+		gaussian_weights);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

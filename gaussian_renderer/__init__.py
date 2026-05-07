@@ -39,7 +39,7 @@ def render_env_map(pc: GaussianModel):
     env_cood2 = sample_cubemap_color(get_env_rayd2(512,1024), pc.get_envmap)
     return {'env_cood1': env_cood1, 'env_cood2': env_cood2}
 
-def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, initial_stage=False, env_scope_center=[0.0,0.0,0.0], env_scope_radius=0.0, img_mask=None):
+def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, initial_stage=False, env_scope_center=[0.0,0.0,0.0], env_scope_radius=0.0):
     """
     Render the scene. 
     
@@ -69,9 +69,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=False,
-        apply_mask=False,
-        slice=False
+        debug=False
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -126,15 +124,10 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             shs = pc.get_features
     else:
         colors_precomp = override_color
-
-    if img_mask is None:
-        mask = torch.full((1, int(viewpoint_camera.image_height), int(viewpoint_camera.image_width)), 1.0).float().cuda()
-    else:
-        mask = img_mask
         
     refl_strengths = pc.get_refl
 
-    base_color, radii, allmap, refl_strength_map, is_rendered = rasterizer(
+    base_color, radii, allmap, refl_strength_map, gaussian_weights = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -144,13 +137,8 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp,
-        env_scope_mask = env_scope_mask,
-        img_mask = mask
+        env_scope_mask = env_scope_mask
     )
-    
-    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
-    # They will be excluded from value updates used in the splitting criteria.
-
     # additional regularizations
     render_alpha = allmap[1:2]
 
@@ -202,6 +190,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             'rend_dist': render_dist,
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
+            "gaussian_weights": gaussian_weights,
             'env_scope_mask': mask
         }
     else:
@@ -224,7 +213,7 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
             "refl_strength_map": refl_strength_map,
             "refl_color_map": refl_color,
             "base_color_map": base_color,
-            "is_rendered": is_rendered
+            "gaussian_weights": gaussian_weights
         }
 
     return out
