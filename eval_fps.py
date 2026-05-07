@@ -15,7 +15,7 @@ import time
 import numpy as np
 from tqdm import tqdm
 from ppisp import PPISP
-from gaussian_renderer import render
+from gaussian_renderer import render_fast
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, OptimizationParams, PipelineParams, get_combined_args
@@ -31,7 +31,7 @@ def render_fps(dataset : ModelParams, iteration : int, pipeline : PipelineParams
 
         if checkpoint:
             opt = OptimizationParams(ArgumentParser())
-            ckpt = torch.load(checkpoint, weight_only=False)
+            ckpt = torch.load(checkpoint, weights_only=False)
             if isinstance(ckpt, tuple):
                 model_params, _ = ckpt
                 gaussians.restore(model_params, opt)
@@ -48,7 +48,7 @@ def render_fps(dataset : ModelParams, iteration : int, pipeline : PipelineParams
         for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
             for i in range(renders_per_view):
                 t1 = time.time()
-                res = render(view, gaussians, pipeline, background, initial_stage=False)
+                res = render_fast(view, gaussians, pipeline, background)
                 rgb_raw = res["render"]
                 apply_ppisp(ppisp, rgb_raw, frame_idx=-1, clamp=True)
                 render_time = time.time() - t1

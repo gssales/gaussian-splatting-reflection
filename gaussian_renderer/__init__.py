@@ -228,3 +228,110 @@ def render(viewpoint_camera: Camera, pc : GaussianModel, pipe, bg_color : torch.
         }
 
     return out
+
+def render_fast(
+        viewpoint_camera: Camera, 
+        pc : GaussianModel, 
+        pipe, 
+        bg_color : torch.Tensor, 
+        scaling_modifier = 1.0,
+        initial_stage=False):
+    """
+    Render the scene. 
+    
+    Background tensor (bg_color) must be on GPU!
+    """
+ 
+    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
+    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_points.retain_grad()
+    except:
+        pass
+
+    # Set up rasterization configuration
+    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+
+    raster_settings = GaussianRasterizationSettings(
+        image_height=int(viewpoint_camera.image_height),
+        image_width=int(viewpoint_camera.image_width),
+        tanfovx=tanfovx,
+        tanfovy=tanfovy,
+        bg=bg_color,
+        scale_modifier=scaling_modifier,
+        viewmatrix=viewpoint_camera.world_view_transform,
+        projmatrix=viewpoint_camera.full_proj_transform,
+        sh_degree=pc.active_sh_degree,
+        campos=viewpoint_camera.camera_center,
+        prefiltered=False,
+        debug=False
+    )
+
+    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+    means3D = pc.get_xyz
+    
+    env_scope_mask = torch.ones_like(pc.get_xyz, device="cuda").bool()
+
+    means2D = screenspace_points
+    opacity = pc.get_opacity
+
+    # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
+    # scaling / rotation by the rasterizer.
+    scales = pc.get_scaling
+    rotations = pc.get_rotation
+    cov3D_precomp = None
+
+    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
+    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    pipe.convert_SHs_python = False
+    shs = pc.get_features
+    colors_precomp = None
+
+    refl_strengths = pc.get_refl
+
+    base_color, _, allmap, refl_strength_map, _ = rasterizer(
+        means3D = means3D,
+        means2D = means2D,
+        shs = shs,
+        colors_precomp = colors_precomp,
+        refl_strengths = refl_strengths,
+        opacities = opacity,
+        scales = scales,
+        rotations = rotations,
+        cov3D_precomp = cov3D_precomp,
+        env_scope_mask = env_scope_mask
+    )
+    render_alpha = allmap[1:2]
+    
+    # get normal map
+    # transform normal from view space to world space
+    render_normal = allmap[2:5]
+    render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T))
+    render_normal = render_normal / (torch.norm(render_normal, dim=-1, keepdim=True)+1e-6)
+
+    if initial_stage:
+        # base_color = base_color.clamp(0,1)
+        out =  {
+            "render": base_color,
+            'rend_alpha': render_alpha,
+            "rend_normal": render_normal.permute(2,0,1),
+            "refl_strength_map": refl_strength_map,
+        }
+    else:
+        refl_color = get_refl_color(pc.get_envmap, viewpoint_camera.HWK, viewpoint_camera.R, viewpoint_camera.T, render_normal)
+
+        final_image = (1-refl_strength_map) * base_color + refl_strength_map * refl_color
+        # final_image = final_image.clamp(0, 1)
+
+        out = {
+            "render": final_image,
+            'rend_alpha': render_alpha,
+            'rend_normal': render_normal.permute(2,0,1),
+            "refl_strength_map": refl_strength_map,
+            "refl_color_map": refl_color,
+            "base_color_map": base_color
+        }
+
+    return out

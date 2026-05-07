@@ -86,13 +86,8 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
-        self.rotation_lr_init =  0.001
-        self.rotation_lr_final = 0.0
-        self.rotation_lr_delay_mult = 0.01
-        self.rotation_lr_max_steps = 45_000
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.lambda_dist = 0.0
         self.lambda_normal = 0.05
         self.opacity_cull = 0.05
 
@@ -116,9 +111,6 @@ class OptimizationParams(ParamGroup):
         self.env_scope_center = [0.,0.,0.]
         self.env_scope_radius = 0.0
 
-        self.use_alpha_mask = False
-        self.random_background_color = False
-
         self.normal_prop_interval = 1000
         self.normal_prop_until_iter = 24_000
         
@@ -126,8 +118,7 @@ class OptimizationParams(ParamGroup):
         self.color_sabotage_until_iter = 24_000
 
         self.disable_color_sabotage = False 
-        self.disable_normal_propagation = False 
-        self.disable_depth_distortion_loss = False 
+        self.disable_normal_propagation = False
         self.disable_normal_consistentcy_loss = False 
         super().__init__(parser, "Optimization Parameters")
 

@@ -15,7 +15,7 @@ import os
 from tqdm import tqdm
 from os import makedirs
 from ppisp import PPISP
-from gaussian_renderer import render, render_env_map
+from gaussian_renderer import render_fast, render_env_map
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
@@ -45,14 +45,14 @@ def render_set(model_path, name, iteration, views, gaussians: GaussianModel, ppi
         torchvision.utils.save_image(ltres['env_cood2'], os.path.join(model_path, 'light2_{}.png'.format(iteration)))
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        render_pkg = render(view, gaussians, pipeline, background)
+        render_pkg = render_fast(view, gaussians, pipeline, background)
         rgb_raw = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
         gt = view.original_image[0:3, :, :]
         gt_alpha_mask = view.gt_alpha_mask
         if gt_alpha_mask is not None:
             gt = gt * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
-            alpha = torch.clamp(render_pkg["alpha"], 0.0, 1.0)
+            alpha = torch.clamp(render_pkg["rend_alpha"], 0.0, 1.0)
             rgb_raw = rgb_raw * alpha + (1-alpha) * background[:, None, None]
         
         frame_idx = idx if name == "train" else -1
@@ -80,7 +80,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         if checkpoint:
             checkpoint_path = os.path.join(dataset.model_path, checkpoint)
             opt = OptimizationParams(ArgumentParser())
-            ckpt = torch.load(checkpoint_path, weight_only=False)
+            ckpt = torch.load(checkpoint_path, weights_only=False)
             if isinstance(ckpt, tuple):
                 model_params, _ = ckpt
                 gaussians.restore(model_params, opt)

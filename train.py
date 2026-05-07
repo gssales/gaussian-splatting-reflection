@@ -13,7 +13,7 @@ import os
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
-from gaussian_renderer import render, network_gui
+from gaussian_renderer import render, render_fast, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -40,7 +40,7 @@ try:
 except:
     FUSED_SSIM_AVAILABLE = False
 
-def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, progress_iterations):
+def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
 
     view_render_options = ['RGB', 'Alpha', 'Normal', 'Depth', "Base Color", "Refl. Strength", "", "Refl. Color", "RGB raw"]
 
@@ -58,6 +58,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         env_scope_center = torch.tensor(center, device='cuda')
         env_scope_radius = opt.env_scope_radius
         refl_mask_loss_weight = 0.4
+    def get_outside_msk():
+        return None if not opt.use_env_scope else \
+            torch.sum((gaussians.get_xyz - env_scope_center[None])**2, dim=-1) > env_scope_radius**2
 
     gaussians = GaussianModel(dataset.sh_degree, opt.refl_init_value, dataset.cubemap_resol)
     scene = Scene(dataset, gaussians)
@@ -103,7 +106,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     viewpoint_stack = scene.getTrainCameras().copy()
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
-    ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
     ema_ppisp_loss_for_log = 0.0
 
@@ -132,22 +134,17 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
         vind = viewpoint_indices.pop(rand_idx)
 
-        bg = torch.rand((3), device="cuda") if opt.random_background_color else background
-
         # Render
         render_pkg = render(
             viewpoint_cam, 
             gaussians, 
             pipe, 
-            bg, 
+            background, 
             initial_stage=iteration<opt.init_until_iter, 
             env_scope_center=opt.env_scope_center, 
             env_scope_radius=opt.env_scope_radius)
-        rgb_raw, viewspace_point_tensor, visibility_filter, radii, alpha = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["rend_alpha"]
+        rgb_raw, alpha = render_pkg["render"], render_pkg["rend_alpha"]
         env_scope_mask = render_pkg["env_scope_mask"]
-
-        # Apply PPISP
-        image = apply_ppisp(ppisp, rgb_raw, frame_idx=vind)
 
         gt_image = viewpoint_cam.original_image.cuda()
         gt_alpha_mask = viewpoint_cam.gt_alpha_mask
@@ -156,17 +153,16 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             gt_image = gt_image * gt_alpha_mask + (1-gt_alpha_mask) * background[:, None, None]
             rgb_raw = rgb_raw * alpha + (1-alpha) * background[:, None, None]
 
+        # Apply PPISP
+        image = apply_ppisp(ppisp, rgb_raw, frame_idx=vind)
         # Loss
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
         else:
             ssim_value = ssim(image, gt_image)
+        # 3DGS original loss
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
-
-        def get_outside_msk():
-            return None if not opt.use_env_scope else \
-                torch.sum((gaussians.get_xyz - env_scope_center[None])**2, dim=-1) > env_scope_radius**2
 
         if opt.use_env_scope:
             refls = gaussians.get_refl
@@ -175,28 +171,15 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
          # regularization
         if not opt.disable_normal_consistentcy_loss:
-            lambda_normal = opt.lambda_normal #if opt.init_until_iter < iteration else 0.0
             rend_normal  = render_pkg['rend_normal']
             surf_normal = render_pkg['surf_normal']
             normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
             if opt.use_env_scope:
                 normal_error = normal_error * env_scope_mask
-            normal_loss = lambda_normal * (normal_error).mean()
+            normal_loss = opt.lambda_normal * (normal_error).mean()
             loss += normal_loss
-            normal_loss = normal_loss.item()
         else:
-            normal_loss = 0
-
-        if not opt.disable_depth_distortion_loss:
-            lambda_dist = opt.lambda_dist if opt.init_until_iter < iteration else 0.0
-            rend_dist = render_pkg["rend_dist"]
-            if opt.use_env_scope:
-                rend_dist = rend_dist * env_scope_mask
-            dist_loss = lambda_dist * (rend_dist).mean()
-            loss += dist_loss
-            dist_loss = dist_loss.item()
-        else:
-            dist_loss = 0
+            normal_loss = torch.tensor(0.0)
 
         # Add PPISP regularization loss to other losses
         ppisp_loss = ppisp.get_regularization_loss()
@@ -208,14 +191,12 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-            ema_dist_for_log = 0.4 * dist_loss + 0.6 * ema_dist_for_log
-            ema_normal_for_log = 0.4 * normal_loss + 0.6 * ema_normal_for_log
+            ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
             ema_ppisp_loss_for_log = 0.4 * ppisp_loss.item() + 0.6 * ema_ppisp_loss_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
-                    # "distort": f"{ema_dist_for_log:.{5}f}",
                     "Normal": f"{ema_normal_for_log:.{5}f}",
                     "PPISP": f"{ema_ppisp_loss_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"
@@ -228,7 +209,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # Log and save
             loss_report = {
                 'l1_loss': Ll1.item(),
-                'normal_loss': normal_loss,
+                'normal_loss': normal_loss.item(),
                 'ppisp_loss': ppisp_loss.item(),
                 'total_loss': loss.item()
             }
@@ -241,9 +222,6 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             if iteration > opt.iterations - 5000:
                 gaussians.freeze_xyz()
 
-            # if total_iterations > iteration >= densify_until_iteration and iteration % 5000 == 0:
-            #     gaussians.filter_env_map()
-
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -251,6 +229,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # Densification
             if (not scene_frozen) and iteration < densify_until_iteration:
                 # Keep track of max radii in image-space for pruning
+                viewspace_point_tensor, visibility_filter, radii = render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
@@ -336,7 +315,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                     custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
                     if custom_cam != None:
                         bg = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-                        render_pkg = render(custom_cam, gaussians, pipe, bg, scaling_modifer, initial_stage=False, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
+                        render_pkg = render_fast(custom_cam, gaussians, pipe, bg, scaling_modifer, initial_stage=False, env_scope_center=opt.env_scope_center, env_scope_radius=opt.env_scope_radius)   
                         rgb_raw = render_pkg["render"]
                         rgb_out = apply_ppisp(ppisp, rgb_raw, frame_idx=-1, clamp=True)
                         net_image = render_net_image(rgb_out, render_pkg, view_render_options, render_mode, custom_cam)
@@ -416,10 +395,9 @@ def training_report(
         with torch.no_grad():        
             for config in validation_configs:
                 config_name = config['name']
+                l1_test = 0.0
+                psnr_test = 0.0
                 if config['cameras'] and len(config['cameras']) > 0:
-
-                    l1_test = 0.0
-                    psnr_test = 0.0
                     for idx, viewpoint in enumerate(config['cameras']):
                         render_pkg = renderFunc(
                             viewpoint, 
@@ -429,7 +407,7 @@ def training_report(
                             initial_stage=initial_stage)
                         raw_image = render_pkg["render"]
                     
-                        gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                        gt_image = torch.clamp(viewpoint.original_image.cuda(), 0.0, 1.0)
                         gt_alpha_mask = viewpoint.gt_alpha_mask
                         if gt_alpha_mask is not None:
                             gt_alpha_mask = gt_alpha_mask.cuda()
@@ -438,96 +416,44 @@ def training_report(
                             alpha = render_pkg["rend_alpha"]
                             raw_image = raw_image * alpha + (1-alpha) * bg[:, None, None]
 
-                        frame_idx = idx if config["use_known_frame_idx"] else -1
-                        rgb_out = apply_ppisp(ppisp, raw_image, frame_idx=frame_idx, clamp=True)
+                        if ppisp is not None:
+                            frame_idx = idx if config["use_known_frame_idx"] else -1
+                            rgb_out = apply_ppisp(ppisp, raw_image, frame_idx=frame_idx, clamp=True)
+                        else:
+                            rgb_out = raw_image
 
                         # ---- TensorBoard logging ----
                         if tb_writer and (idx < 5):
-                            tb_writer.add_images(
-                                f"{config_name}_view_{viewpoint.image_name}/render",
-                                rgb_out[None],
-                                global_step=iteration,
-                            )
+                            tb_writer.add_images( f"{config_name}_view_{viewpoint.image_name}/render", rgb_out[None], global_step=iteration)
                             
+                            rend_alpha = render_pkg['rend_alpha']
+                            rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
+                            tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/rend_alpha", rend_alpha[None], global_step=iteration)
+
+                            rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
+                            tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/rend_normal", rend_normal[None], global_step=iteration)
+
                             if iteration == testing_iterations[0]:
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/ground_truth",
-                                    gt_image[None],
-                                    global_step=iteration,
-                                )
+                                tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/ground_truth", gt_image[None], global_step=iteration)
 
-                            try:
+                            if "base_color_map" in render_pkg:
                                 base_color_map = render_pkg["base_color_map"]
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/base_color",
-                                    base_color_map[None],
-                                    global_step=iteration,
-                                )
-                            except Exception:
-                                pass
+                                tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/base_color", base_color_map[None], global_step=iteration)
 
-                            try:
+                            if "refl_strength_map" in render_pkg:
                                 refl_map = render_pkg['refl_strength_map']
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/refl_map",
-                                    refl_map[None],
-                                    global_step=iteration,
-                                )
-                            except Exception:
-                                pass
+                                tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/refl_map", refl_map[None], global_step=iteration)
 
-                            try:
-                                rend_alpha = render_pkg['rend_alpha']
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/refl_map",
-                                    refl_map[None],
-                                    global_step=iteration,
-                                )
-                            except Exception:
-                                pass
-
-                            try:
-                                rend_alpha = colormap(rend_alpha.detach().cpu().numpy()[0], cmap='turbo')
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/rend_alpha",
-                                    rend_alpha[None],
-                                    global_step=iteration,
-                                )
-                            except Exception:
-                                pass
-
-                            try:
-                                rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/rend_normal",
-                                    rend_normal[None],
-                                    global_step=iteration,
-                                )
-                            except Exception:
-                                pass
-
-                            try:
+                            if "surf_normal" in render_pkg:
                                 surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/surf_normal",
-                                    surf_normal[None],
-                                    global_step=iteration,
-                                )
-                            except Exception:
-                                pass
+                                tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/surf_normal", surf_normal[None], global_step=iteration)
         
-                            try:
+                            if "surf_depth" in render_pkg:
                                 depth = render_pkg["surf_depth"]
                                 norm = depth.max()
                                 depth = depth / norm
                                 depth = colormap(depth.detach().cpu().numpy()[0], cmap='turbo')
-                                tb_writer.add_images(
-                                    f"{config_name}_view_{viewpoint.image_name}/depth",
-                                    depth[None],
-                                    global_step=iteration,
-                                )
-                            except Exception as e:
-                                pass
+                                tb_writer.add_images(f"{config_name}_view_{viewpoint.image_name}/depth", depth[None], global_step=iteration)
 
                         # ---- Metrics ----
                         l1_test += l1_loss(rgb_out, gt_image).mean().double()
@@ -544,7 +470,8 @@ def training_report(
 
     if tb_writer:
         tb_writer.flush()
-    ppisp.train()
+    if ppisp is not None:
+        ppisp.train()
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
@@ -573,16 +500,14 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    progress_iterations = []
     if args.auto_test:
-        progress_iterations = []#500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
         args.test_iterations = [500, 1000, 1500, 3000] + [i for i in range(5000, args.iterations+1, 5000)]
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
         network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, progress_iterations)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
 
     # All done
     print("\nTraining complete.")

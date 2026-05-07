@@ -16,10 +16,11 @@ import torch
 import torchvision.transforms.functional as tf
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
-from utils.image_utils import psnr_map, to_3ch, colormap, gradient_map
-from utils.mae_utils import compute_mae
+from utils.image_utils import psnr_map, to_3ch
+from utils.mae_utils import angular_error_map
 from argparse import ArgumentParser
 import traceback
+from natsort import natsorted
 
 try:
     from fused_ssim import fused_ssim_map
@@ -31,7 +32,7 @@ def readImages(renders_dir, gt_dir):
     renders = []
     gts = []
     image_names = []
-    for fname in os.listdir(renders_dir):
+    for fname in natsorted(os.listdir(gt_dir)):
         render = Image.open(renders_dir / fname)
         gt = Image.open(gt_dir / fname)
         renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
@@ -41,13 +42,13 @@ def readImages(renders_dir, gt_dir):
 
 def readNormalsImages(renders_dir, gt_dir):
     render_normals = []
-    for fname in os.listdir(renders_dir):
+    for fname in natsorted(os.listdir(renders_dir)):
         normal = Image.open(renders_dir / fname)
         render_normals.append(tf.to_tensor(normal).unsqueeze(0)[:, :3, :, :].cuda())
 
     gt_normals = []
     alphas = []
-    for fname in os.listdir(gt_dir):
+    for fname in natsorted(os.listdir(gt_dir)):
         if fname.endswith("_normal.png"):
             normal = Image.open(gt_dir / fname)
             gt_normals.append(tf.to_tensor(normal).unsqueeze(0)[:, :3, :, :].cuda())
@@ -129,11 +130,13 @@ def evaluate(model_path, args):
                 if args.eval_normals:
                     normal_gt = normal_gts[idx]
                     normal_gt = (normal_gt-0.5)*2
+                    normal_gt = normal_gt[0].to(torch.float32)
 
                     normal_render = normal_renders[idx]
                     normal_render = (normal_render-0.5)*2
+                    normal_render = normal_render[0].to(torch.float32)
 
-                    angular_error = compute_mae(normal_render, normal_gt)
+                    angular_error = angular_error_map(normal_render, normal_gt)
 
                     mean_angular_error = angular_error.mean().item()
                     std_angular_error = angular_error.std().item()
