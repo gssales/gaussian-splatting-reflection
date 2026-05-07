@@ -60,6 +60,7 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.num_points = 100_000
+        self.post_process = True # whether to run the post-processing PPISP
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -77,7 +78,7 @@ class PipelineParams(ParamGroup):
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
-        self.iterations = 31_000
+        self.iterations = 40_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01

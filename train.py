@@ -66,15 +66,18 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
-    ppisp_config = PPISPConfig(
-        use_controller=True,
-        controller_distillation=True,
-        controller_activation_ratio=(opt.iterations - 5000) / opt.iterations, 
-    )
-    ppisp = PPISP(num_cameras=1, num_frames=len(scene.getTrainCameras()), config=ppisp_config).cuda()
-    ppisp.train()
-    ppisp_optimizers = ppisp.create_optimizers()
-    ppisp_schedulers = ppisp.create_schedulers(ppisp_optimizers, opt.iterations)
+    ppisp = None
+    if dataset.post_process:
+        ppisp_config = PPISPConfig(
+            use_controller=True,
+            controller_distillation=True,
+            controller_activation_ratio=(opt.iterations - 5000) / opt.iterations, 
+        )
+        ppisp = PPISP(num_cameras=1, num_frames=len(scene.getTrainCameras()), config=ppisp_config).cuda()
+        ppisp.train()
+        ppisp_optimizers = ppisp.create_optimizers()
+        ppisp_schedulers = ppisp.create_schedulers(ppisp_optimizers, opt.iterations)
+    scene_frozen = False
     
     if checkpoint:
         ckpt = torch.load(checkpoint)
@@ -82,7 +85,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             # backward compatibility with original 3DGS checkpoint format
             model_params, first_iter = ckpt
             gaussians.restore(model_params, opt)
-        else:
+        elif dataset.post_process and ("ppisp" in ckpt):
             first_iter = ckpt["iteration"]
             gaussians.restore(ckpt["gaussians"], opt)
             if "ppisp" in ckpt:
@@ -95,7 +98,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
                 for sch_idx, state in enumerate(ckpt["ppisp_schedulers"]):
                     if sch_idx < len(ppisp_schedulers):
                         ppisp_schedulers[sch_idx].load_state_dict(state)
-
+        else:
+            raise ValueError("Unrecognized checkpoint format")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -113,12 +117,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
     print('Densify until: {}'.format(densify_until_iteration))
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations+1):        
-        scene_frozen = ppisp_config.use_controller and (iteration >= ppisp_config.controller_activation_ratio * opt.iterations)
-
+    for iteration in range(first_iter, opt.iterations+1): 
         iter_start.record()
 
-        if not scene_frozen:
+        if dataset.post_process:       
+            scene_frozen = ppisp_config.use_controller and (iteration >= ppisp_config.controller_activation_ratio * opt.iterations)
+
+        if not scene_frozen and dataset.post_process:
             gaussians.update_learning_rate(iteration)
 
             # Every 1000 its we increase the levels of SH up to a maximum degree
@@ -154,7 +159,11 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             rgb_raw = rgb_raw * alpha + (1-alpha) * background[:, None, None]
 
         # Apply PPISP
-        image = apply_ppisp(ppisp, rgb_raw, frame_idx=vind)
+        if dataset.post_process:
+            image = apply_ppisp(ppisp, rgb_raw, frame_idx=vind)
+        else:
+            image = rgb_raw
+
         # Loss
         Ll1 = l1_loss(image, gt_image)
         if FUSED_SSIM_AVAILABLE:
@@ -182,8 +191,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             normal_loss = torch.tensor(0.0)
 
         # Add PPISP regularization loss to other losses
-        ppisp_loss = ppisp.get_regularization_loss()
-        loss = loss + ppisp_loss
+        if dataset.post_process:
+            ppisp_loss = ppisp.get_regularization_loss()
+            loss = loss + ppisp_loss
 
         loss.backward()
         iter_end.record()
@@ -219,7 +229,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
             if iteration == densify_until_iteration:
                 gaussians.double_env_map()
 
-            if iteration > opt.iterations - 5000:
+            if iteration > opt.iterations - 10000:
                 gaussians.freeze_xyz()
 
             if (iteration in saving_iterations):
@@ -281,12 +291,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe, testing_iterat
 
             # Optimizer step
             if iteration < opt.iterations:
-                for ppisp_opt in ppisp_optimizers:
-                    ppisp_opt.step()
-                    ppisp_opt.zero_grad(set_to_none=True)
+                if dataset.post_process:
+                    for ppisp_opt in ppisp_optimizers:
+                        ppisp_opt.step()
+                        ppisp_opt.zero_grad(set_to_none=True)
 
-                for sched in ppisp_schedulers:
-                    sched.step()
+                    for sched in ppisp_schedulers:
+                        sched.step()
 
                 if not scene_frozen:
                     # NOTE: Do NOT step gaussians.exposure_optimizer here.
